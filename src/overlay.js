@@ -12,7 +12,7 @@ export function installWelcomeOverlay() {
   logo.innerHTML = '<img src="assets/branding/MaakBib_Logo_LeftRight.svg" alt="logo" style="height:56px">';
 
   const content = document.createElement('div');
-  content.innerHTML = '<h2>Welkom — MaakBib: Inkscape Les 1</h2><p>Klik op de selectieknop om te beginnen.</p>';
+  content.innerHTML = '<h2>Welkom — MaakBib: Inkscape Les 1</h2><p>Klik op de selectie tool om te beginnen.</p>';
 
   card.appendChild(logo);
   card.appendChild(content);

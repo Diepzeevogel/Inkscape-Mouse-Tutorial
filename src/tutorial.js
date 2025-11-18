@@ -7,7 +7,6 @@ let tutorialObjects = { owl: null, helmet: null, owlWithHelmet: null };
 export async function startTutorial() {
   if (tutorialStarted) return;
   tutorialStarted = true;
-  updatePanelWithInstructions();
   const url = 'assets/tutorials/selecteren_en_slepen.svg';
   console.info('[tutorial] fetching SVG fragments for new structure:', url);
   const ids = {
@@ -87,7 +86,6 @@ export async function startTutorial() {
     const hb = helmetGroup.getBoundingRect(true);
     const tb = helmetTargetGroup.getBoundingRect(true);
     const dist = Math.sqrt(Math.pow(hb.left - tb.left, 2) + Math.pow(hb.top - tb.top, 2));
-    console.log('[tutorial] Helmet moved. Distance to target:', dist);
     if (dist < 10) {
       if (owlGroup) canvas.remove(owlGroup);
       if (helmetGroup) canvas.remove(helmetGroup);
@@ -96,24 +94,34 @@ export async function startTutorial() {
         owlWithHelmetGroup.visible = true;
         owlWithHelmetGroup.setCoords();
         canvas.requestRenderAll();
-        console.log('[tutorial] Success: Owl_with_Helmet now visible');
+        // Show next tutorial button in aside panel
+        const panel = document.getElementById('panel');
+        if (panel) {
+          let btn = document.getElementById('next-tutorial-btn');
+          if (!btn) {
+            btn = document.createElement('button');
+            btn.id = 'next-tutorial-btn';
+            btn.style.display = 'block';
+            btn.style.width = '100%';
+            btn.style.height = '64px';
+            btn.style.margin = '32px auto 0 auto';
+            btn.style.background = '#1976d2';
+            btn.style.border = 'none';
+            btn.style.borderRadius = '32px';
+            btn.style.cursor = 'pointer';
+            btn.style.boxShadow = '0 2px 8px rgba(0,0,0,0.15)';
+            btn.innerHTML = '<i class="fa-solid fa-arrow-right" style="font-size:2.5em;color:white;"></i>';
+            btn.onclick = function() {
+              // Placeholder: move to next tutorial logic
+              alert('Next tutorial!');
+            };
+            panel.appendChild(btn);
+          }
+        }
       }
-      console.info('[tutorial] success: helmet placed on target, showing Owl_with_Helmet');
     }
   });
 }
 
-export function updatePanelWithInstructions() {
-  const panel = document.getElementById('panel');
-  if (!panel) return;
-  panel.innerHTML = `
-    <h3>Opdracht</h3>
-    <p>Selecteer de helm en sleep deze op het hoofd van het uiltje.</p>
-    <ul>
-      <li><i class="fa-solid fa-mouse"></i>&nbsp; Linker muisknop: selecteren</li>
-      <li><i class="fa-solid fa-arrows-up-down-left-right"></i>&nbsp; Klik en sleep om te verplaatsen</li>
-      <li><i class="fa-solid fa-hand-pointer"></i>&nbsp; Laat los om te plaatsen</li>
-    </ul>
-  `;
-}
+// Panel instructions are now set in index.html
 
