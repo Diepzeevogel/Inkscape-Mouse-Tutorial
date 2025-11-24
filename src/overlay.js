@@ -12,7 +12,7 @@ export function installWelcomeOverlay() {
   logo.innerHTML = '<img src="assets/branding/MaakBib_Logo_LeftRight.svg" alt="logo" style="height:56px">';
 
   const content = document.createElement('div');
-  content.innerHTML = '<h2>Welkom — MaakBib: Inkscape Les 1</h2><p>Klik op de selectie tool om te beginnen.</p>';
+  content.innerHTML = '<h2>Welkom — MaakBib: Inkscape Les 1</h2><p>Klik op de selectie tool <img src="assets/icons/tool-pointer.svg" alt="Select" style="width:24px;height:24px"> om te beginnen.</p>';
 
   card.appendChild(logo);
   card.appendChild(content);
@@ -26,7 +26,7 @@ export function createSelectOverlayButton(onClick) {
   selectToolOverlay.id = 'selectToolOverlay';
   selectToolOverlay.className = 'tool-btn';
   // Position fixed so the overlay button is aligned to the viewport (not to the welcome card)
-  selectToolOverlay.style.cssText = 'position:fixed;top:55px;left:5px;z-index:10001;animation:wiggle 0.5s infinite;width:40px;height:40px;border:1px solid #ccc;background:white;border-radius:4px;box-shadow:0 0 10px rgba(0,123,255,0.8);pointer-events:auto';
+  selectToolOverlay.style.cssText = 'position:fixed;top:57px;left:8px;z-index:10001;animation:wiggle 0.5s infinite;width:40px;height:40px;border:1px solid #ccc;background:white;border-radius:4px;box-shadow:0 0 10px rgba(0,123,255,0.8);pointer-events:auto';
   selectToolOverlay.innerHTML = '<img src="assets/icons/tool-pointer.svg" alt="Select" style="width:24px;height:24px">';
   selectToolOverlay.addEventListener('click', onClick);
   return selectToolOverlay;

@@ -426,7 +426,7 @@ function installWelcomeOverlay() {
   logo.innerHTML = '<img src="assets/branding/MaakBib_Logo_LeftRight.svg" alt="logo" style="height:56px">';
 
   const content = document.createElement('div');
-  content.innerHTML = '<h2>Welkom — MaakBib: Inkscape Les 1: Navigeren</h2><p>Volg een korte oefening om vertrouwd te raken met muisbediening: selecteren, meerdere selecteren, pannen en zoomen.</p>';
+  content.innerHTML = '<h2>Welkom — MaakBib: Inkscape Les 1: Selecteren en slepen</h2><p>Volg een korte oefening om vertrouwd te raken met muisbediening: selecteren, meerdere selecteren, pannen en zoomen.</p>';
 
   card.appendChild(logo);
   card.appendChild(content);

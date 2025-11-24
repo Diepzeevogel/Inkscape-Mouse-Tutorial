@@ -150,56 +150,193 @@ export async function startTutorial() {
 // --- Second tutorial: shift-select and drag to toolbox ---
 async function startSecondTutorial() {
   // Disable marquee box-selection so user must Shift+click to multi-select
-  if (canvas) canvas.selection = false;
+  if (canvas) {
+    canvas.selection = true; // keep selection enabled so shift-click works
+    canvas.allowBoxSelection = false; // but disable box (marquee) selection
+  }
+
+  // Update page title and toolbar for Lesson 2
+  try {
+    document.title = 'Inkscape Les 2: Meerdere objecten selecteren';
+    const brand = document.querySelector('#toolbar .brand');
+    if (brand) {
+      const img = brand.querySelector('img');
+      // rebuild brand content keeping the logo image
+      brand.innerHTML = '';
+      if (img) brand.appendChild(img);
+      brand.appendChild(document.createTextNode(' Inkscape Les 2: Meerdere objecten selecteren'));
+    }
+    const panel = document.getElementById('panel');
+    if (panel) {
+      panel.innerHTML = `
+        <h3>Opdracht</h3>
+        <p>Oh nee! Al het gereedschap is uit de koffer gevallen.</p>
+        <p>Steek jij ze er terug in?</p>
+        <ol>
+          <li>Houd <strong>Shift</strong> ingedrukt en klik op alle gereedschappen om ze te selecteren.</li>
+          <li>Als je <strong>al</strong> het gereedschap geselecteerd heb, sleep je het naar de gereedschapskist.</li>
+        </ol>
+        <p>Probeer het ook met een selectievak. Klik en sleep een rechthoek om meerdere gereedschappen tegelijk te selecteren.</p>
+      `;
+    }
+  } catch (err) {
+    // ignore DOM errors in non-browser environments
+  }
 
   const url = 'assets/tutorials/shift_select.svg';
-  const ids = ['Wrench', 'Screwdriver', 'Saw', 'Pencil', 'Toolbox'];
+  const ids = ['Toolbox', 'Wrench', 'Screwdriver', 'Saw', 'Pencil', 'Hammer'];
   const found = await findGroupFragments(url, ids);
   const groups = await Promise.all(ids.map(id => makeFabricGroupFromFragment(found[id] || '')));
 
-  // Add all groups to the right side of the canvas; toolbox will be non-selectable
+  // Add all groups; toolbox will be non-selectable. Position other items in a circle around it.
   const added = [];
-  const margin = 40;
-  const baseX = canvas.getWidth() * 0.6; // place on right side
-  let offsetY = 80;
+  const baseX = canvas.getWidth() * 0.4; // approximate right side for toolbox placement
   for (let i = 0; i < ids.length; i++) {
     const id = ids[i];
     const g = groups[i];
     if (!g) continue;
-    // Make toolbox non-selectable and keep it stationary
     if (id === 'Toolbox') {
       g.set({ selectable: false, evented: false, visible: true });
       // place toolbox near right edge center
-      g.left = baseX + 120;
+      g.left = baseX;
       g.top = canvas.getHeight() / 2 - 80;
       canvas.add(g);
+      tutorialObjects.toolbox = g;
       continue;
     }
-    g.set({ selectable: true, evented: true, visible: true });
-    // position items in a column on the right
-    g.left = baseX + margin;
-    g.top = offsetY;
-    offsetY += (g.getBoundingRect(true).height || 80) + 20;
+    g.set({ selectable: true, evented: true, visible: true,
+            lockScalingX: true, lockScalingY: true, lockUniScaling: true });
+    // add now; final positions will be set in a circle around the toolbox
     canvas.add(g);
+    // Hide scaling controls
+    if (typeof g.setControlsVisibility === 'function') {
+      g.setControlsVisibility({ mt:false, mb:false, ml:false, mr:false, bl:false, br:false, tl:false, tr:false });
+    }
     added.push(g);
+  }
+
+  // After adding, position added items in a circle around the toolbox group
+  if (tutorialObjects.toolbox && added.length > 0) {
+    const tbRect = tutorialObjects.toolbox.getBoundingRect(true);
+    const cx = tbRect.left + tbRect.width / 2;
+    const cy = tbRect.top + tbRect.height / 2;
+    const radius = Math.max(tbRect.width, tbRect.height) * 0.8 + 60;
+    const n = added.length;
+    for (let i = 0; i < n; i++) {
+      const obj = added[i];
+      const angle = (i / n) * (2 * Math.PI) - Math.PI / 2; // start at top
+      const px = cx + radius * Math.cos(angle);
+      const py = cy + radius * Math.sin(angle);
+      const br = obj.getBoundingRect(true);
+      obj.left = px - (br.width / 2);
+      obj.top = py - (br.height / 2);
+      obj.setCoords();
+    }
   }
 
   canvas.requestRenderAll();
 
   const totalToSelect = added.length;
   let isDragging = false;
+  let completed = false;
 
   function pointerOverToolbox(e) {
-    const toolboxEl = document.getElementById('leftToolbar') || document.getElementById('toolbar');
-    if (!toolboxEl || !e) return false;
-    const rect = toolboxEl.getBoundingClientRect();
-    const x = e.clientX;
-    const y = e.clientY;
-    return x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom;
+    if (!e || !tutorialObjects.toolbox) return false;
+    // use canvas pointer (canvas coordinates) and toolbox bounding rect (canvas coordinates)
+    const p = canvas.getPointer(e);
+    const br = tutorialObjects.toolbox.getBoundingRect(true);
+    if (!br) return false;
+    return (p.x >= br.left && p.x <= (br.left + br.width) && p.y >= br.top && p.y <= (br.top + br.height));
   }
 
-  function onObjectMoving(e) {
+  function onObjectMoving(opt) {
+    if (completed) return;
     isDragging = true;
+    const e = opt && opt.e;
+    if (!e) return;
+    const active = canvas.getActiveObjects();
+    // Only accept when the user has selected exactly the set of added items
+    if (!active || active.length !== totalToSelect) return;
+    // If pointer is over the canvas toolbox, collect immediately (do not wait for mouseup)
+    if (pointerOverToolbox(e)) {
+      completed = true;
+      const selectedToRemove = active.slice();
+      selectedToRemove.forEach(o => canvas.remove(o));
+      canvas.discardActiveObject();
+      canvas.requestRenderAll();
+
+      // Animate toolbox: bounce scale to 1.2 and back twice over 1000ms total
+      const tb = tutorialObjects.toolbox;
+      if (tb) {
+        const baseScaleX = tb.scaleX || 1;
+        const baseScaleY = tb.scaleY || 1;
+        const targetScaleX = baseScaleX * 1.2;
+        const targetScaleY = baseScaleY * 1.2;
+        const singleUp = 250;
+        const singleDown = 250;
+        function bounceOnce(onDone) {
+          fabric.util.animate({
+            startValue: baseScaleX,
+            endValue: targetScaleX,
+            duration: singleUp,
+            onChange(value) {
+              tb.scaleX = value;
+              tb.scaleY = baseScaleY * (value / baseScaleX);
+              tb.setCoords();
+              canvas.requestRenderAll();
+            },
+            onComplete() {
+              fabric.util.animate({
+                startValue: targetScaleX,
+                endValue: baseScaleX,
+                duration: singleDown,
+                onChange(value) {
+                  tb.scaleX = value;
+                  tb.scaleY = baseScaleY * (value / baseScaleX);
+                  tb.setCoords();
+                  canvas.requestRenderAll();
+                },
+                onComplete() { if (onDone) onDone(); }
+              });
+            }
+          });
+        }
+        // when both bounces finish, show the continue button in the side panel
+        const showContinue = () => {
+          const panel = document.getElementById('panel');
+          if (!panel) return;
+          let btn = document.getElementById('next-tutorial-btn-2');
+          if (!btn) {
+            btn = document.createElement('button');
+            btn.id = 'next-tutorial-btn-2';
+            btn.style.display = 'block';
+            btn.style.width = '100%';
+            btn.style.height = '64px';
+            btn.style.margin = '32px auto 0 auto';
+            btn.style.background = '#1976d2';
+            btn.style.border = 'none';
+            btn.style.borderRadius = '32px';
+            btn.style.cursor = 'pointer';
+            btn.style.boxShadow = '0 2px 8px rgba(0,0,0,0.15)';
+            btn.innerHTML = '<i class="fa-solid fa-arrow-right" style="font-size:2.5em;color:white;"></i>';
+            btn.onclick = function() {
+              // proceed to next tutorial (placeholder)
+              console.info('[tutorial] Continue to next tutorial (button)');
+            };
+            panel.appendChild(btn);
+          }
+        };
+
+        bounceOnce(() => { bounceOnce(() => { showContinue(); }); });
+      }
+
+      // cleanup event handlers and restore selection behavior
+      canvas.off('object:moving', onObjectMoving);
+      canvas.off('mouse:up', onMouseUp);
+      canvas.selection = true;
+      if (canvas) canvas.allowBoxSelection = true;
+      console.info('[tutorial] Collected all items into toolbox — moving to next tutorial');
+    }
   }
 
   async function onMouseUp(opt) {
@@ -209,16 +346,60 @@ async function startSecondTutorial() {
     if (!active || active.length !== totalToSelect) { isDragging = false; return; }
     // check pointer over toolbox area
     if (pointerOverToolbox(e)) {
-      // remove selected objects
-      active.forEach(o => canvas.remove(o));
+      // gather selected objects then remove them
+      const selectedToRemove = active.slice();
+      selectedToRemove.forEach(o => canvas.remove(o));
       canvas.discardActiveObject();
       canvas.requestRenderAll();
-      // cleanup
+
+      // Animate toolbox: bounce scale to 1.2 and back twice over 1000ms total
+      const tb = tutorialObjects.toolbox;
+      if (tb) {
+        const baseScaleX = tb.scaleX || 1;
+        const baseScaleY = tb.scaleY || 1;
+        const targetScaleX = baseScaleX * 1.2;
+        const targetScaleY = baseScaleY * 1.2;
+        const singleUp = 250;
+        const singleDown = 250;
+        // perform one up-down bounce, then repeat once
+        function bounceOnce(onDone) {
+          // up
+          fabric.util.animate({
+            startValue: baseScaleX,
+            endValue: targetScaleX,
+            duration: singleUp,
+            onChange(value) {
+              tb.scaleX = value;
+              tb.scaleY = baseScaleY * (value / baseScaleX);
+              tb.setCoords();
+              canvas.requestRenderAll();
+            },
+            onComplete() {
+              // down
+              fabric.util.animate({
+                startValue: targetScaleX,
+                endValue: baseScaleX,
+                duration: singleDown,
+                onChange(value) {
+                  tb.scaleX = value;
+                  tb.scaleY = baseScaleY * (value / baseScaleX);
+                  tb.setCoords();
+                  canvas.requestRenderAll();
+                },
+                onComplete() { if (onDone) onDone(); }
+              });
+            }
+          });
+        }
+
+        bounceOnce(() => { bounceOnce(() => { /* done */ }); });
+      }
+
+      // cleanup event handlers and restore selection behavior
       canvas.off('object:moving', onObjectMoving);
       canvas.off('mouse:up', onMouseUp);
-      // restore box selection to previous default
       canvas.selection = true;
-      // Move on: here we simply log and could start next tutorial
+      if (canvas) canvas.allowBoxSelection = true;
       console.info('[tutorial] Collected all items into toolbox — moving to next tutorial');
     }
     isDragging = false;

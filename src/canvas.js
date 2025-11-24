@@ -1,5 +1,7 @@
 // Canvas module: initialize Fabric canvas and handlers
 export let canvas = null;
+// When false, starting a marquee (box) selection by dragging on empty canvas is disabled.
+export let allowBoxSelection = true;
 
 export function initCanvas(canvasId = 'c') {
   canvas = new fabric.Canvas(canvasId, {
@@ -133,7 +135,8 @@ function setupInputHandlers() {
         const dx = Math.abs(p.x - mouseDownInfo.start.x);
         const dy = Math.abs(p.y - mouseDownInfo.start.y);
         if (dx > 4 || dy > 4) {
-          if (!mouseDownInfo.target) {
+          // Start marquee selection only when clicking on empty space and box selection is allowed
+          if (!mouseDownInfo.target && canvas && canvas.allowBoxSelection !== false) {
             selectionStart = mouseDownInfo.start;
             selectionDragging = true;
           }
