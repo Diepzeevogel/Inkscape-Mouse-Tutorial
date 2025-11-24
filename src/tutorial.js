@@ -2,12 +2,31 @@ import { canvas } from './canvas.js';
 import { rectsOverlap, findGroupFragments, makeFabricGroupFromFragment } from './utils.js';
 
 let tutorialStarted = false;
+let tutorialInitializing = false;
 let tutorialObjects = { owl: null, helmet: null, helmetTarget: null, owlWithHelmet: null, helmetAnimId: null };
 
 export async function startTutorial() {
   if (tutorialStarted) return;
   tutorialStarted = true;
-  const url = 'assets/tutorials/selecteren_en_slepen.svg';
+  // reflect current lesson in the URL
+  try { history.replaceState(null, '', '#lesson=1'); } catch (e) {}
+  // Ensure aside panel shows Lesson 1 instructions when preparing/starting
+  try {
+    const panel = document.getElementById('panel');
+    if (panel) {
+      panel.innerHTML = `
+        <h3>Opdracht</h3>
+        <p>Help het uiltje zich klaar te maken voor de maakplaats!</p>
+        <p>Zet de helm op zijn hoofd.</p>
+        <ul>
+          <li><img src="assets/icons/left-click.svg" alt="Left click" style="width:20px;height:20px;vertical-align:middle">&nbsp; Linker muisknop: Selecteer de helm</li>
+          <li><i class="fa-solid fa-arrows-up-down-left-right"></i>&nbsp; Klik en sleep om te verplaatsen</li>
+          <li><i class="fa-solid fa-hand-pointer"></i>&nbsp; Laat los om te plaatsen</li>
+        </ul>
+      `;
+    }
+  } catch (err) { /* ignore DOM errors in non-browser env */ }
+  const url = 'assets/tutorials/les1.svg';
   console.info('[tutorial] fetching SVG fragments for new structure:', url);
   const ids = {
     owl: ['Owl'],
@@ -89,6 +108,9 @@ export async function startTutorial() {
   }
   if (owlWithHelmetGroup) {
     owlWithHelmetGroup.set({ selectable: false, evented: false, visible: false });
+    // mark for tutorial identification so other startup flows can detect it
+    try { owlWithHelmetGroup.tutorialId = 'Owl_with_Helmet'; } catch (e) {}
+    tutorialObjects.owlWithHelmet = owlWithHelmetGroup;
     canvas.add(owlWithHelmetGroup);
     console.log('[tutorial] Added Owl_with_Helmet group to canvas (hidden):', owlWithHelmetGroup);
   } else {
@@ -145,15 +167,48 @@ export async function startTutorial() {
   });
 }
 
+// Reset tutorial state and restart lesson 1 without overlays
+export async function startTutorialDirect() {
+  if (tutorialInitializing) return;
+  tutorialInitializing = true;
+  // Stop any running animations
+  try {
+    if (tutorialObjects && tutorialObjects.helmetAnimId) {
+      try { cancelAnimationFrame(tutorialObjects.helmetAnimId); } catch (e) {}
+      tutorialObjects.helmetAnimId = null;
+    }
+  } catch (e) {}
+
+  // Remove any tutorial-specific event handlers to avoid duplicates
+  try {
+    if (canvas) {
+      canvas.off('object:moving');
+      canvas.off('mouse:up');
+      // remove all objects
+      const objs = canvas.getObjects().slice();
+      objs.forEach(o => canvas.remove(o));
+      canvas.discardActiveObject();
+      canvas.requestRenderAll();
+    }
+  } catch (e) {}
+
+  // Reset flag and start normally
+  tutorialStarted = false;
+  await startTutorial();
+  tutorialInitializing = false;
+}
+
 // Panel instructions are now set in index.html
 
 // --- Second tutorial: shift-select and drag to toolbox ---
-async function startSecondTutorial() {
+export async function startSecondTutorial() {
   // Disable marquee box-selection so user must Shift+click to multi-select
   if (canvas) {
     canvas.selection = true; // keep selection enabled so shift-click works
     canvas.allowBoxSelection = false; // but disable box (marquee) selection
   }
+  // reflect current lesson in the URL (use location.hash so hashchange fires and UI updates)
+  try { location.hash = 'lesson=2'; } catch (e) {}
 
   // Update page title and toolbar for Lesson 2
   try {
@@ -183,7 +238,7 @@ async function startSecondTutorial() {
     // ignore DOM errors in non-browser environments
   }
 
-  const url = 'assets/tutorials/shift_select.svg';
+  const url = 'assets/tutorials/les2.svg';
   const ids = ['Toolbox', 'Wrench', 'Screwdriver', 'Saw', 'Pencil', 'Hammer'];
   const found = await findGroupFragments(url, ids);
   const groups = await Promise.all(ids.map(id => makeFabricGroupFromFragment(found[id] || '')));
@@ -407,5 +462,46 @@ async function startSecondTutorial() {
 
   canvas.on('object:moving', onObjectMoving);
   canvas.on('mouse:up', onMouseUp);
+}
+
+export async function prepareLesson2State() {
+  // Ensure the Owl_with_Helmet (end state of lesson 1) is present on the canvas.
+  try {
+    // Also ensure the aside panel shows Lesson 2 instructions when preparing state
+    try {
+      const panel = document.getElementById('panel');
+      if (panel) {
+        panel.innerHTML = `
+          <h3>Opdracht</h3>
+          <p>Oh nee! Al het gereedschap is uit de koffer gevallen.</p>
+          <p>Steek jij ze er terug in?</p>
+          <ol>
+            <li>Houd <strong>Shift</strong> ingedrukt en klik op alle gereedschappen om ze te selecteren.</li>
+            <li>Als je <strong>al</strong> het gereedschap geselecteerd heb, sleep je het naar de gereedschapskist.</li>
+          </ol>
+          <p>Probeer het ook met een selectievak. Klik en sleep een rechthoek om meerdere gereedschappen tegelijk te selecteren.</p>
+        `;
+      }
+    } catch (err) { /* ignore DOM errors */ }
+
+    // If the owl-with-helmet is already present, keep it (preserve position)
+    const exists = canvas.getObjects().some(o => o && o.tutorialId === 'Owl_with_Helmet');
+    if (exists) return;
+
+    const url = 'assets/tutorials/les1.svg';
+    const found = await findGroupFragments(url, ['Owl_with_Helmet']);
+    const frag = found['Owl_with_Helmet'];
+    if (!frag) return;
+    const g = await makeFabricGroupFromFragment(frag);
+    if (!g) return;
+    g.set({ selectable: false, evented: false, visible: true });
+    try { g.tutorialId = 'Owl_with_Helmet'; } catch (e) {}
+    tutorialObjects.owlWithHelmet = g;
+    canvas.add(g);
+    g.setCoords();
+    canvas.requestRenderAll();
+  } catch (err) {
+    console.error('[tutorial] prepareLesson2State error:', err);
+  }
 }
 
