@@ -3,7 +3,7 @@ import { rectsOverlap, findGroupFragments, makeFabricGroupFromFragment } from '.
 
 let tutorialStarted = false;
 let tutorialInitializing = false;
-let tutorialObjects = { owl: null, helmet: null, helmetTarget: null, owlWithHelmet: null, helmetAnimId: null };
+let tutorialObjects = { owl: null, helmet: null, helmetTarget: null, owlWithHelmet: null, helmetAnimId: null, machine: null, machineBulb: null, machineArrowAnim: null };
 
 export async function startTutorial() {
   if (tutorialStarted) return;
@@ -375,8 +375,8 @@ export async function startSecondTutorial() {
             btn.style.boxShadow = '0 2px 8px rgba(0,0,0,0.15)';
             btn.innerHTML = '<i class="fa-solid fa-arrow-right" style="font-size:2.5em;color:white;"></i>';
             btn.onclick = function() {
-              // proceed to next tutorial (placeholder)
-              console.info('[tutorial] Continue to next tutorial (button)');
+              // proceed to next tutorial
+              try { startThirdTutorial(); } catch (e) { console.info('[tutorial] next -> lesson3', e); }
             };
             panel.appendChild(btn);
           }
@@ -407,13 +407,13 @@ export async function startSecondTutorial() {
       canvas.discardActiveObject();
       canvas.requestRenderAll();
 
-      // Animate toolbox: bounce scale to 1.2 and back twice over 1000ms total
+      // Animate toolbox: bounce scale to 1.1 and back twice over 1000ms total
       const tb = tutorialObjects.toolbox;
       if (tb) {
         const baseScaleX = tb.scaleX || 1;
         const baseScaleY = tb.scaleY || 1;
-        const targetScaleX = baseScaleX * 1.2;
-        const targetScaleY = baseScaleY * 1.2;
+        const targetScaleX = baseScaleX * 1.1;
+        const targetScaleY = baseScaleY * 1.1;
         const singleUp = 250;
         const singleDown = 250;
         // perform one up-down bounce, then repeat once
@@ -503,5 +503,614 @@ export async function prepareLesson2State() {
   } catch (err) {
     console.error('[tutorial] prepareLesson2State error:', err);
   }
+}
+
+// --- Third tutorial: Maker Machine spawn off-canvas and arrow indicator ---
+export async function startThirdTutorial() {
+  // reflect current lesson in the URL
+  try { location.hash = 'lesson=3'; } catch (e) {}
+
+  // Update side panel with lesson 3 instructions
+  try {
+    const brand = document.getElementById('brand');
+    if (brand) {
+      const img = brand.querySelector('img');
+      brand.innerHTML = '';
+      if (img) brand.appendChild(img);
+      brand.appendChild(document.createTextNode(' Inkscape Les 3: Pannen en zoomen'));
+    }
+    const panel = document.getElementById('panel');
+    if (panel) {
+      panel.innerHTML = `
+        <h3>Opdracht</h3>
+        <p>Laten we de creativiteits-machine starten!</p>
+        <ol>
+          <li>Volg de <span style="color:#1976d2">blauwe pijl</span> om de machine te vinden.</li>
+          <li><i class="fa-solid fa-hand"></i>&nbsp; Klik en sleep met de midden-muis knop om te <strong>pannen</strong> (verschuiven).</li>
+          <li><strong>Ctrl + Scroll</strong> om in en uit te <strong>zoomen</strong>.</li>
+          <li>Zoom ver genoeg in op de machine om de <strong>startknop</strong> te vinden.</li>
+          <li>Klik op de startknop om de machine aan te zetten!</li>
+        </ol>
+      `;
+    }
+  } catch (err) {
+    // ignore DOM errors in non-browser environments
+  }
+
+  // avoid duplicate starts
+  if (tutorialObjects.machine && canvas.getObjects().includes(tutorialObjects.machine)) return;
+
+  // ensure helper objects (owl with helmet, toolbox) are present
+  try { await ensureLesson3Helpers(); } catch (e) { console.warn('[tutorial] ensureLesson3Helpers error', e); }
+
+  const url = 'assets/tutorials/les3.svg';
+  const ids = ['Layer_2']; // Main machine layer containing Bulb_Off, Bulb_On, Main, and Start
+  const found = await findGroupFragments(url, ids);
+  const frag = found['Layer_2'];
+  if (!frag) {
+    console.warn('[tutorial] Layer_2 fragment not found in', url);
+    return;
+  }
+
+  const g = await makeFabricGroupFromFragment(frag);
+  if (!g) {
+    console.warn('[tutorial] Could not create fabric group for Layer_2');
+    return;
+  }
+  
+  // Disable object caching to prevent fuzzy rendering when zoomed in
+  function disableCaching(group) {
+    if (!group) return;
+    group.objectCaching = false;
+    if (group.getObjects) {
+      group.getObjects().forEach(obj => {
+        obj.objectCaching = false;
+        if (obj.getObjects) {
+          disableCaching(obj);
+        }
+      });
+    }
+  }
+  disableCaching(g);
+
+  // place machine at center + offset (offset controlled via `targetOffset` below)
+  const centerX = canvas.getWidth() / 2;
+  const centerY = canvas.getHeight() / 2;
+  const targetOffset = 1000; // change this value to 1000 when you want it far off-canvas
+  g.set({ 
+    selectable: false, 
+    evented: true, 
+    visible: true, 
+    hoverCursor: 'default',
+    subTargetCheck: true  // Allow interaction with individual children (like Start button)
+  });
+  canvas.add(g);
+  g.setCoords();
+  // bounding rect before moving
+  const br = g.getBoundingRect(true);
+  const targetCenterX = centerX + targetOffset;
+  const desiredLeft = targetCenterX - br.width / 2;
+  const desiredTop = centerY - br.height / 2;
+  // compute delta for moving the machine
+  const deltaX = desiredLeft - br.left;
+  const deltaY = desiredTop - br.top;
+  // move the group by setting its left/top (don't mutate child coordinates)
+  g.left = g.left + deltaX;
+  g.top = g.top + deltaY;
+  g.setCoords();
+  
+  // Find and hide the Bulb_On group that's inside the Machine group
+  // We'll keep a reference to it so we can toggle it visible later
+  let bulbChild = null;
+  let hiddenBulbCount = 0;
+  
+  function hideAllBulbOnObjects(group, depth = 0) {
+    if (!group || !group.getObjects) return;
+    const objs = group.getObjects();
+    for (let i = 0; i < objs.length; i++) {
+      const obj = objs[i];
+      // Fabric.js stores SVG id in various ways - check all possible properties
+      const objId = obj.id || obj.svgId || obj.data?.id;
+      const objIdLower = objId ? String(objId).toLowerCase() : '';
+      
+      // Hide ALL objects with Bulb_On id (Fabric flattens <g> into individual paths)
+      // Keep Bulb_Off visible
+      if (objIdLower === 'bulb_on' || objIdLower === 'bulb_x5f_on') {
+        obj.visible = false;
+        obj.dirty = true;
+        hiddenBulbCount++;
+        
+        // Store reference to first Bulb_On object for later reveal
+        if (!bulbChild) {
+          bulbChild = obj;
+        }
+      }
+      
+      // Recursively search in nested groups
+      if (obj.type === 'group' && obj.getObjects) {
+        hideAllBulbOnObjects(obj, depth + 1);
+      }
+    }
+  }
+  
+  hideAllBulbOnObjects(g);
+  
+  // Disable events on all "Main" objects to prevent cursor change
+  function disableMainObjects(group) {
+    if (!group || !group.getObjects) return;
+    const objs = group.getObjects();
+    for (let i = 0; i < objs.length; i++) {
+      const obj = objs[i];
+      const objId = obj.id || obj.svgId || obj.data?.id;
+      const objIdLower = objId ? String(objId).toLowerCase() : '';
+      
+      // Disable events on all "Main" objects (the static machine parts)
+      if (objIdLower === 'main') {
+        obj.set({ evented: false });
+      }
+      
+      // Recursively process nested groups
+      if (obj.type === 'group' && obj.getObjects) {
+        disableMainObjects(obj);
+      }
+    }
+  }
+  disableMainObjects(g);
+  
+  // Find and collect all Bulb_Off objects for later toggling
+  const bulbOffObjects = [];
+  function collectBulbOffObjects(group) {
+    if (!group || !group.getObjects) return;
+    const objs = group.getObjects();
+    for (let i = 0; i < objs.length; i++) {
+      const obj = objs[i];
+      const objId = obj.id || obj.svgId || obj.data?.id;
+      const objIdLower = objId ? String(objId).toLowerCase() : '';
+      
+      // Collect all Bulb_Off objects
+      if (objIdLower === 'bulb_off' || objIdLower === 'bulb_x5f_off') {
+        bulbOffObjects.push(obj);
+      }
+      
+      // Recursively search in nested groups
+      if (obj.type === 'group' && obj.getObjects) {
+        collectBulbOffObjects(obj);
+      }
+    }
+  }
+  collectBulbOffObjects(g);
+  
+  // Find and collect all Gear objects for rotation animation
+  const gearObjects = [];
+  function collectGearObjects(group, depth = 0) {
+    if (!group || !group.getObjects) return;
+    const objs = group.getObjects();
+    for (let i = 0; i < objs.length; i++) {
+      const obj = objs[i];
+      const objId = obj.id || obj.svgId || obj.data?.id;
+      const objIdLower = objId ? String(objId).toLowerCase() : '';
+      
+      // Collect all Gear objects (Gear, Gear1, Gear2, Gear3, Gear4)
+      // These are groups containing multiple elements that should rotate together
+      if (objIdLower && (objIdLower === 'gear' || objIdLower.match(/^gear\d*$/))) {
+        // Get bounding rect before changing origin
+        const rect = obj.getBoundingRect();
+        const centerX = rect.left + rect.width / 2;
+        const centerY = rect.top + rect.height / 2;
+        
+        // Set origin to center for proper rotation and adjust position to compensate
+        obj.set({ 
+          originX: 'center', 
+          originY: 'center',
+          left: centerX,
+          top: centerY
+        });
+        obj.setCoords();
+        
+        gearObjects.push(obj);
+      }
+      
+      // Recursively search in nested groups
+      if (obj.type === 'group' && obj.getObjects) {
+        collectGearObjects(obj, depth + 1);
+      }
+    }
+  }
+  collectGearObjects(g);
+  console.log('[tutorial] Found', gearObjects.length, 'gear groups');
+  
+  // Animation state for gears
+  let gearsAnimating = false;
+  let gearAnimationFrame = null;
+  
+  function startGearRotation() {
+    if (gearsAnimating) return; // Already animating
+    gearsAnimating = true;
+    
+    const startTime = performance.now();
+    
+    function animateGears(now) {
+      if (!gearsAnimating) return;
+      
+      const elapsed = now - startTime;
+      
+      // Rotate all gears at the same speed in the same direction
+      const speed = 0.03; // Degrees per millisecond
+      const rotation = (elapsed * speed) % 360;
+      
+      gearObjects.forEach((gear) => {
+        gear.set({ angle: rotation });
+        gear.setCoords();
+      });
+      
+      canvas.requestRenderAll();
+      gearAnimationFrame = fabric.util.requestAnimFrame(animateGears);
+    }
+    
+    gearAnimationFrame = fabric.util.requestAnimFrame(animateGears);
+  }
+  
+  function stopGearRotation() {
+    gearsAnimating = false;
+    if (gearAnimationFrame) {
+      fabric.util.cancelAnimFrame(gearAnimationFrame);
+      gearAnimationFrame = null;
+    }
+  }
+  
+  // Store references for cleanup
+  tutorialObjects.startGearRotation = startGearRotation;
+  tutorialObjects.stopGearRotation = stopGearRotation;
+  
+  // Find the 'Start' object and make it clickable to toggle the bulbs
+  function findAndSetupStartButton(group) {
+    if (!group || !group.getObjects) return null;
+    const objs = group.getObjects();
+    
+    for (let i = 0; i < objs.length; i++) {
+      const obj = objs[i];
+      const objId = obj.id || obj.svgId || obj.data?.id;
+      const objIdLower = objId ? String(objId).toLowerCase() : '';
+      
+      // Check if this is the Start object
+      if (objIdLower === 'start' || objIdLower === 'start_x5f_button' || objIdLower === 'startbutton') {
+        return obj;
+      }
+      
+      // Recursively search in nested groups
+      if (obj.type === 'group' && obj.getObjects) {
+        const found = findAndSetupStartButton(obj);
+        if (found) return found;
+      }
+    }
+    return null;
+  }
+  
+  const startButton = findAndSetupStartButton(g);
+  if (startButton) {
+    // Button starts as non-clickable - user must zoom in first
+    const MAX_ZOOM = 6; // defined in canvas.js
+    const REQUIRED_ZOOM = MAX_ZOOM * 0.8; // 80% of max = 4.8
+    let buttonEnabled = false;
+    
+    // Keep evented:true always so we can detect hover, but control cursor and click behavior
+    // Also set perPixelTargetFind to ensure accurate hit detection for the circle
+    startButton.set({ 
+      selectable: false, 
+      evented: true, 
+      hoverCursor: 'default',
+      perPixelTargetFind: true,
+      targetFindTolerance: 5
+    });
+    
+    // Click handler for when button becomes enabled
+    const toggleBulbs = function(e) {
+      if (!buttonEnabled) {
+        return;
+      }
+      
+      // Animate the button click - scale down and back up
+      const originalScaleX = startButton.scaleX || 1;
+      const originalScaleY = startButton.scaleY || 1;
+      
+      startButton.animate('scaleX', originalScaleX * 0.8, {
+        duration: 100,
+        onChange: canvas.requestRenderAll.bind(canvas),
+        onComplete: function() {
+          startButton.animate('scaleX', originalScaleX, {
+            duration: 100,
+            onChange: canvas.requestRenderAll.bind(canvas)
+          });
+        }
+      });
+      
+      startButton.animate('scaleY', originalScaleY * 0.8, {
+        duration: 100,
+        onChange: canvas.requestRenderAll.bind(canvas),
+        onComplete: function() {
+          startButton.animate('scaleY', originalScaleY, {
+            duration: 100,
+            onChange: canvas.requestRenderAll.bind(canvas)
+          });
+        }
+      });
+      
+      // Hide all Bulb_Off objects
+      bulbOffObjects.forEach(obj => {
+        obj.visible = false;
+        obj.dirty = true;
+      });
+      
+      // Show all Bulb_On objects (reverse the hiding we did earlier)
+      function showAllBulbOnObjects(group) {
+        if (!group || !group.getObjects) return;
+        const objs = group.getObjects();
+        for (let i = 0; i < objs.length; i++) {
+          const obj = objs[i];
+          const objId = obj.id || obj.svgId || obj.data?.id;
+          const objIdLower = objId ? String(objId).toLowerCase() : '';
+          
+          if (objIdLower === 'bulb_on' || objIdLower === 'bulb_x5f_on') {
+            obj.visible = true;
+            obj.dirty = true;
+          }
+          
+          if (obj.type === 'group' && obj.getObjects) {
+            showAllBulbOnObjects(obj);
+          }
+        }
+      }
+      showAllBulbOnObjects(g);
+      
+      // Start gear rotation when bulb turns on
+      startGearRotation();
+      console.log('[tutorial] Started gear rotation');
+      
+      canvas.requestRenderAll();
+    };
+    
+    startButton.on('mousedown', toggleBulbs);
+    
+    // Monitor zoom level and enable button when zoomed in enough
+    const checkZoomLevel = function() {
+      const currentZoom = canvas.getZoom();
+      if (currentZoom >= REQUIRED_ZOOM && !buttonEnabled) {
+        startButton.set({ hoverCursor: 'pointer' });
+        buttonEnabled = true;
+        canvas.requestRenderAll();
+      } else if (currentZoom < REQUIRED_ZOOM && buttonEnabled) {
+        startButton.set({ hoverCursor: 'default' });
+        buttonEnabled = false;
+        canvas.requestRenderAll();
+      }
+    };
+    
+    // Check zoom on mouse wheel and other zoom events
+    canvas.on('mouse:wheel', checkZoomLevel);
+    canvas.on('after:render', checkZoomLevel);
+    
+    // Initial check
+    checkZoomLevel();
+  } else {
+    console.warn('[tutorial] Could not find Start button in Machine group');
+  }
+  
+  canvas.requestRenderAll();
+  try { g.tutorialId = 'MakerMachine'; } catch (e) {}
+  tutorialObjects.machine = g;
+  tutorialObjects.machineBulb = bulbChild; // store reference to the bulb inside the machine
+
+  // Create an arrow that points toward the machine from the edge of the visible canvas
+  // The arrow follows the user as they pan, always staying at the edge pointing to the machine
+  const arrowSize = 20;
+  const EDGE_MARGIN = 60; // Distance from canvas edge (increased for better visibility)
+  const tri = new fabric.Triangle({ 
+    width: arrowSize, 
+    height: arrowSize, 
+    fill: '#1976d2', 
+    left: 0, 
+    top: 0, 
+    angle: 0, 
+    selectable: false, 
+    evented: false,
+    originX: 'center',
+    originY: 'center',
+    visible: true
+  });
+  try { tri.tutorialId = 'MakerMachineArrow'; } catch (e) {}
+  canvas.add(tri);
+  tri.setCoords();
+
+  // Animation loop
+  let start = performance.now();
+  let running = true;
+  function animateArrow(now) {
+    if (!running) return;
+    
+    // Get viewport center in canvas coordinates
+    const vpt = canvas.viewportTransform;
+    const zoom = canvas.getZoom();
+    const viewportCenterX = -vpt[4] / zoom + (canvas.getWidth() / zoom) / 2;
+    const viewportCenterY = -vpt[5] / zoom + (canvas.getHeight() / zoom) / 2;
+    
+    // Get machine center in canvas coordinates
+    const mrect = tutorialObjects.machine ? tutorialObjects.machine.getBoundingRect(true) : null;
+    if (!mrect) {
+      tutorialObjects.machineArrowAnim = fabric.util.requestAnimFrame(animateArrow);
+      return;
+    }
+    
+    const machineCenterX = mrect.left + mrect.width / 2;
+    const machineCenterY = mrect.top + mrect.height / 2;
+    
+    // Calculate vector from viewport center to machine center
+    const vectorX = machineCenterX - viewportCenterX;
+    const vectorY = machineCenterY - viewportCenterY;
+    const vectorLength = Math.sqrt(vectorX * vectorX + vectorY * vectorY);
+    
+    if (vectorLength === 0) {
+      // Machine is at viewport center, hide arrow
+      tri.visible = false;
+      tri.dirty = true;
+      canvas.requestRenderAll();
+      tutorialObjects.machineArrowAnim = fabric.util.requestAnimFrame(animateArrow);
+      return;
+    }
+    
+    // Normalize vector
+    const dirX = vectorX / vectorLength;
+    const dirY = vectorY / vectorLength;
+    
+    // Calculate arrow angle (pointing toward machine)
+    const angleRad = Math.atan2(dirY, dirX);
+    const angleDeg = angleRad * 180 / Math.PI;
+    
+    // Calculate intersection with viewport edges (in canvas coordinates)
+    const viewportWidth = canvas.getWidth() / zoom;
+    const viewportHeight = canvas.getHeight() / zoom;
+    const viewportLeft = viewportCenterX - viewportWidth / 2;
+    const viewportTop = viewportCenterY - viewportHeight / 2;
+    const viewportRight = viewportLeft + viewportWidth;
+    const viewportBottom = viewportTop + viewportHeight;
+    
+    // Find intersection with viewport edges using parametric line equation
+    let intersectX, intersectY;
+    const margin = EDGE_MARGIN / zoom;
+    
+    // Check all four edges and find the nearest intersection
+    const intersections = [];
+    
+    // Right edge
+    if (dirX > 0) {
+      const t = (viewportRight - margin - viewportCenterX) / dirX;
+      const y = viewportCenterY + t * dirY;
+      if (y >= viewportTop + margin && y <= viewportBottom - margin) {
+        intersections.push({ x: viewportRight - margin, y, t });
+      }
+    }
+    
+    // Left edge
+    if (dirX < 0) {
+      const t = (viewportLeft + margin - viewportCenterX) / dirX;
+      const y = viewportCenterY + t * dirY;
+      if (y >= viewportTop + margin && y <= viewportBottom - margin) {
+        intersections.push({ x: viewportLeft + margin, y, t });
+      }
+    }
+    
+    // Bottom edge
+    if (dirY > 0) {
+      const t = (viewportBottom - margin - viewportCenterY) / dirY;
+      const x = viewportCenterX + t * dirX;
+      if (x >= viewportLeft + margin && x <= viewportRight - margin) {
+        intersections.push({ x, y: viewportBottom - margin, t });
+      }
+    }
+    
+    // Top edge
+    if (dirY < 0) {
+      const t = (viewportTop + margin - viewportCenterY) / dirY;
+      const x = viewportCenterX + t * dirX;
+      if (x >= viewportLeft + margin && x <= viewportRight - margin) {
+        intersections.push({ x, y: viewportTop + margin, t });
+      }
+    }
+    
+    // Use the nearest intersection (smallest positive t)
+    if (intersections.length > 0) {
+      intersections.sort((a, b) => a.t - b.t);
+      intersectX = intersections[0].x;
+      intersectY = intersections[0].y;
+    } else {
+      // Fallback: use viewport center
+      intersectX = viewportCenterX;
+      intersectY = viewportCenterY;
+    }
+    
+    // Add wiggle animation along the direction vector
+    const wiggleT = ((now - start) / 400) * Math.PI * 2; // speed
+    const wiggleAmount = Math.sin(wiggleT) * 10 / zoom; // wiggle ±10px in canvas coordinates
+    intersectX += dirX * wiggleAmount;
+    intersectY += dirY * wiggleAmount;
+    
+    // Check if machine is visible in viewport
+    const machineVisible = (
+      mrect.left < viewportRight &&
+      mrect.left + mrect.width > viewportLeft &&
+      mrect.top < viewportBottom &&
+      mrect.top + mrect.height > viewportTop
+    );
+    
+    if (machineVisible) {
+      // Machine is in view -> hide arrow but keep animating to detect when it leaves view
+      tri.visible = false;
+      tri.dirty = true;
+    } else {
+      // Machine is not in view -> show arrow
+      tri.visible = true;
+      tri.dirty = true;
+      
+      // Update arrow position and rotation
+      tri.set({
+        left: intersectX,
+        top: intersectY,
+        angle: angleDeg + 90 // Triangle points up by default, so add 90 to point in direction
+      });
+      tri.setCoords();
+    }
+    
+    canvas.requestRenderAll();
+    tutorialObjects.machineArrowAnim = fabric.util.requestAnimFrame(animateArrow);
+  }
+  tutorialObjects.machineArrowAnim = fabric.util.requestAnimFrame(animateArrow);
+}
+
+// Ensure lesson 1 owl_with_helmet and lesson 2 toolbox can be spawned for lesson 3
+export async function ensureLesson3Helpers() {
+  // add Owl_with_Helmet from les1.svg if missing
+  try {
+    const existsOwl = canvas.getObjects().some(o => o && o.tutorialId === 'Owl_with_Helmet');
+    if (!existsOwl) {
+      const found1 = await findGroupFragments('assets/tutorials/les1.svg', ['Owl_with_Helmet']);
+      const frag = found1['Owl_with_Helmet'];
+      if (frag) {
+        const g = await makeFabricGroupFromFragment(frag);
+        if (g) {
+          // Preserve the original coordinates from the SVG (same as lesson 1 behavior)
+          g.set({ selectable: false, evented: false, visible: true });
+          try { g.tutorialId = 'Owl_with_Helmet'; } catch (e) {}
+          canvas.add(g);
+          g.setCoords();
+        }
+      }
+    }
+  } catch (e) { console.warn('[tutorial] ensureLesson3Helpers owl error', e); }
+
+  // add Toolbox from les2.svg if missing
+  try {
+    const existsTb = canvas.getObjects().some(o => o && o.tutorialId === 'Toolbox');
+    if (!existsTb) {
+      const found2 = await findGroupFragments('assets/tutorials/les2.svg', ['Toolbox']);
+      const frag2 = found2['Toolbox'];
+      if (frag2) {
+        const tg = await makeFabricGroupFromFragment(frag2);
+        if (tg) {
+          tg.set({ selectable: false, evented: false, visible: true });
+          try { tg.tutorialId = 'Toolbox'; } catch (e) {}
+          // Position toolbox exactly as in startSecondTutorial(): baseX = canvas.getWidth() * 0.4, top = canvas.getHeight()/2 - 80
+          const baseX = canvas.getWidth() * 0.4;
+          const topY = canvas.getHeight() / 2 - 80;
+          canvas.add(tg);
+          // center the group around the baseX/topY anchor
+          const br = tg.getBoundingRect(true);
+          tg.left = baseX;
+          tg.top = topY;
+          tg.setCoords();
+          tutorialObjects.toolbox = tg;
+        }
+      }
+    }
+  } catch (e) { console.warn('[tutorial] ensureLesson3Helpers toolbox error', e); }
+  canvas.requestRenderAll();
 }
 

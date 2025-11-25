@@ -248,7 +248,7 @@ function setupInputHandlers() {
       const delta = e.deltaY;
       let zoom = canvas.getZoom();
       zoom *= 0.999 ** delta;
-      zoom = Math.max(0.25, Math.min(4, zoom));
+      zoom = Math.max(0.25, Math.min(6, zoom));
       const pointer = canvas.getPointer(e);
       canvas.zoomToPoint(pointer, zoom);
     } else {

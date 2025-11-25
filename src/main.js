@@ -1,6 +1,6 @@
 import { initCanvas, centerCanvas, canvas } from './canvas.js';
 import { installWelcomeOverlay, createSelectOverlayButton } from './overlay.js';
-import { startTutorial, startTutorialDirect, startSecondTutorial, prepareLesson2State } from './tutorial.js';
+import { startTutorial, startTutorialDirect, startSecondTutorial, prepareLesson2State, startThirdTutorial } from './tutorial.js';
 
 // Initialize canvas
 initCanvas('c');
@@ -39,7 +39,8 @@ document.body.appendChild(selectButtonOverlay);
 // Lesson buttons (bottom of the aside panel)
 const lessons = [
   { id: 1, title: 'Les 1', icon: 'assets/icons/tutorial_icons/les1.svg' },
-  { id: 2, title: 'Les 2', icon: 'assets/icons/tutorial_icons/les2.svg' }
+  { id: 2, title: 'Les 2', icon: 'assets/icons/tutorial_icons/les2.svg' },
+  { id: 3, title: 'Les 3', icon: 'assets/icons/tutorial_icons/les3.svg' }
 ];
 
 function createLessonButtons() {
@@ -105,6 +106,9 @@ function createLessonButtons() {
           await prepareLesson2State();
           await startSecondTutorial();
         }
+        if (target === 3) {
+          await startThirdTutorial();
+        }
         updateLessonButtons();
         return;
       }
@@ -129,6 +133,9 @@ function createLessonButtons() {
       } else if (target === 2) {
         await prepareLesson2State();
         await startSecondTutorial();
+      } else if (target === 3) {
+        // clear and start lesson 3
+        await startThirdTutorial();
       }
       updateLessonButtons();
     });
@@ -290,6 +297,12 @@ async function startFromHash() {
       // prepare end state of lesson 1 (owl with helmet) and then start lesson 2
       await prepareLesson2State();
       await startSecondTutorial();
+    } else if (lesson === 3) {
+      try {
+        if (welcomeOverlay && welcomeOverlay.parentNode) welcomeOverlay.parentNode.removeChild(welcomeOverlay);
+        if (selectButtonOverlay && selectButtonOverlay.parentNode) selectButtonOverlay.parentNode.removeChild(selectButtonOverlay);
+      } catch (e) {}
+      await startThirdTutorial();
     }
   } catch (e) { /* ignore */ }
 }
