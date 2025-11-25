@@ -58,6 +58,20 @@
       </aside>
     </div>
 
+    <script>
+      // Patch CanvasRenderingContext2D to set willReadFrequently for Fabric.js
+      // This prevents the "Canvas2D: Multiple readback operations" warning
+      (function() {
+        const originalGetContext = HTMLCanvasElement.prototype.getContext;
+        HTMLCanvasElement.prototype.getContext = function(contextType, contextAttributes) {
+          if (contextType === '2d') {
+            contextAttributes = contextAttributes || {};
+            contextAttributes.willReadFrequently = true;
+          }
+          return originalGetContext.call(this, contextType, contextAttributes);
+        };
+      })();
+    </script>
     <script src="https://cdn.jsdelivr.net/npm/fabric@5.2.4/dist/fabric.min.js"></script>
     <script type="module" src="src/main.js"></script>
   </body>

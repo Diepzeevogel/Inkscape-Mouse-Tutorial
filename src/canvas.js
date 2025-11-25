@@ -242,6 +242,8 @@ function setupInputHandlers() {
   canvas.on('selection:updated', filterSelectionByContainment);
 
   // Mousewheel scrolling and zoom
+  // Note: Fabric.js handles the wheel event internally, so we use its event system
+  // The passive listener warning comes from Fabric's internal listeners
   canvas.on('mouse:wheel', function(opt) {
     const e = opt.e;
     if (e.ctrlKey) {

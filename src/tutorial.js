@@ -10,6 +10,20 @@ export async function startTutorial() {
   tutorialStarted = true;
   // reflect current lesson in the URL
   try { history.replaceState(null, '', '#lesson=1'); } catch (e) {}
+
+  // Update page title and toolbar for Lesson 1
+  try {
+    document.title = 'Inkscape Les 1: Selecteren en slepen';
+    const brand = document.querySelector('#toolbar .brand');
+    if (brand) {
+      const img = brand.querySelector('img');
+      // rebuild brand content keeping the logo image
+      brand.innerHTML = '';
+      if (img) brand.appendChild(img);
+      brand.appendChild(document.createTextNode(' Inkscape Les 1: Selecteren en slepen'));
+    }
+  } catch (err) { /* ignore DOM errors in non-browser env */ }
+
   // Ensure aside panel shows Lesson 1 instructions when preparing/starting
   try {
     const panel = document.getElementById('panel');
@@ -510,9 +524,10 @@ export async function startThirdTutorial() {
   // reflect current lesson in the URL
   try { location.hash = 'lesson=3'; } catch (e) {}
 
-  // Update side panel with lesson 3 instructions
+  // Update page title and toolbar for Lesson 3
   try {
-    const brand = document.getElementById('brand');
+    document.title = 'Inkscape Les 3: Pannen en zoomen';
+    const brand = document.querySelector('#toolbar .brand');
     if (brand) {
       const img = brand.querySelector('img');
       brand.innerHTML = '';
@@ -790,7 +805,7 @@ export async function startThirdTutorial() {
   if (startButton) {
     // Button starts as non-clickable - user must zoom in first
     const MAX_ZOOM = 6; // defined in canvas.js
-    const REQUIRED_ZOOM = MAX_ZOOM * 0.8; // 80% of max = 4.8
+    const REQUIRED_ZOOM = MAX_ZOOM * 0.5; // 50% of max = 3
     let buttonEnabled = false;
     
     // Keep evented:true always so we can detect hover, but control cursor and click behavior
@@ -864,7 +879,135 @@ export async function startThirdTutorial() {
       
       // Start gear rotation when bulb turns on
       startGearRotation();
-      console.log('[tutorial] Started gear rotation');
+      
+      // Bring owl and toolbox to front (above machine)
+      const owlWithHelmet = canvas.getObjects().find(o => o.tutorialId === 'Owl_with_Helmet');
+      const toolbox = canvas.getObjects().find(o => o.tutorialId === 'Toolbox');
+      if (owlWithHelmet) canvas.bringToFront(owlWithHelmet);
+      if (toolbox) canvas.bringToFront(toolbox);
+      
+      // Zoom out to show the whole machine
+      const machineBounds = g.getBoundingRect(true);
+      const machineCenterX = machineBounds.left + machineBounds.width / 2;
+      const machineCenterY = machineBounds.top + machineBounds.height / 2;
+      
+      // Calculate zoom level to fit machine with some padding
+      const canvasWidth = canvas.getWidth();
+      const canvasHeight = canvas.getHeight();
+      const padding = 100; // pixels of padding around machine
+      const zoomX = (canvasWidth - padding * 2) / machineBounds.width;
+      const zoomY = (canvasHeight - padding * 2) / machineBounds.height;
+      const targetZoom = Math.min(zoomX, zoomY, 1); // Don't zoom in beyond 1:1
+      
+      // Calculate positions for owl and toolbox near the machine
+      const owlTargetX = machineCenterX;
+      const owlTargetY = machineCenterY + machineBounds.height / 4 + 100;
+      const toolboxTargetX = machineCenterX + machineBounds.width / 3;
+      const toolboxTargetY = machineCenterY + machineBounds.height / 4;
+      
+      // Animate zoom out and center on machine
+      const currentZoom = canvas.getZoom();
+      const currentVpt = canvas.viewportTransform;
+      const currentCenterX = -currentVpt[4] / currentZoom + canvasWidth / (2 * currentZoom);
+      const currentCenterY = -currentVpt[5] / currentZoom + canvasHeight / (2 * currentZoom);
+      
+      // Store initial positions of owl and toolbox
+      const owlStartX = owlWithHelmet ? owlWithHelmet.left : owlTargetX;
+      const owlStartY = owlWithHelmet ? owlWithHelmet.top : owlTargetY;
+      const toolboxStartX = toolbox ? toolbox.left : toolboxTargetX;
+      const toolboxStartY = toolbox ? toolbox.top : toolboxTargetY;
+      const owlStartAngle = owlWithHelmet ? (owlWithHelmet.angle || 0) : 0;
+      
+      // Calculate target viewport transform
+      const targetVptX = -(machineCenterX * targetZoom) + canvasWidth / 2;
+      const targetVptY = -(machineCenterY * targetZoom) + canvasHeight / 2;
+      
+      // Set owl rotation origin to center
+      if (owlWithHelmet) {
+        owlWithHelmet.set({
+          originX: 'center',
+          originY: 'center'
+        });
+      }
+      
+      // Start owl wiggle animation
+      let owlWiggleActive = true;
+      const owlWiggleStart = performance.now();
+      function animateOwlWiggle(now) {
+        if (!owlWiggleActive || !owlWithHelmet) return;
+        
+        const elapsed = now - owlWiggleStart;
+        const wiggleAngle = Math.sin(elapsed / 300) * 5; // ±5 degrees wiggle
+        owlWithHelmet.set({ angle: owlStartAngle + wiggleAngle });
+        owlWithHelmet.setCoords();
+        
+        if (owlWiggleActive) {
+          fabric.util.requestAnimFrame(animateOwlWiggle);
+        }
+      }
+      fabric.util.requestAnimFrame(animateOwlWiggle);
+      
+      // Smooth zoom and pan animation
+      const animDuration = 1000; // 1 second
+      const startTime = performance.now();
+      
+      function animateZoomOut(now) {
+        const elapsed = now - startTime;
+        const progress = Math.min(elapsed / animDuration, 1);
+        // Ease out cubic
+        const eased = 1 - Math.pow(1 - progress, 3);
+        
+        const newZoom = currentZoom + (targetZoom - currentZoom) * eased;
+        const newVptX = currentVpt[4] + (targetVptX - currentVpt[4]) * eased;
+        const newVptY = currentVpt[5] + (targetVptY - currentVpt[5]) * eased;
+        
+        canvas.setViewportTransform([newZoom, 0, 0, newZoom, newVptX, newVptY]);
+        
+        // Move owl and toolbox into view
+        if (owlWithHelmet) {
+          const newOwlX = owlStartX + (owlTargetX - owlStartX) * eased;
+          const newOwlY = owlStartY + (owlTargetY - owlStartY) * eased;
+          owlWithHelmet.set({ left: newOwlX, top: newOwlY });
+          owlWithHelmet.setCoords();
+        }
+        
+        if (toolbox) {
+          const newToolboxX = toolboxStartX + (toolboxTargetX - toolboxStartX) * eased;
+          const newToolboxY = toolboxStartY + (toolboxTargetY - toolboxStartY) * eased;
+          toolbox.set({ left: newToolboxX, top: newToolboxY });
+          toolbox.setCoords();
+        }
+        
+        canvas.requestRenderAll();
+        
+        if (progress < 1) {
+          fabric.util.requestAnimFrame(animateZoomOut);
+        } else {
+          // Update side panel with completion message
+          try {
+            const panel = document.getElementById('panel');
+            if (panel) {
+              panel.innerHTML = `
+                <h3>🎉 Gefeliciteerd!</h3>
+                <p>Je hebt alle lessen voltooid!</p>
+                <p>Je kunt nu:</p>
+                <ul>
+                  <li><strong>Selecteren</strong> door op objecten te klikken</li>
+                  <li><strong>Slepen</strong> om objecten te verplaatsen</li>
+                  <li><strong>Meerdere objecten selecteren</strong> met Shift of een selectievak</li>
+                  <li><strong>Pannen</strong> door te klikken en slepen op het canvas</li>
+                  <li><strong>Zoomen</strong> met Ctrl + Scroll</li>
+                </ul>
+                <p>Je bent nu klaar om de <strong>basisfuncties van Inkscape</strong> te leren!</p>
+              `;
+            }
+          } catch (err) {
+            // ignore DOM errors
+          }
+        }
+      }
+      
+      fabric.util.requestAnimFrame(animateZoomOut);
       
       canvas.requestRenderAll();
     };
