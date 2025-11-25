@@ -1,11 +1,42 @@
 import { canvas } from './canvas.js';
 import { rectsOverlap, findGroupFragments, makeFabricGroupFromFragment } from './utils.js';
+import { startLesson1 as startLesson1Refactored, restartLesson1, cleanupLesson1 } from './Lesson1Refactored.js';
+import { startLesson2 as startLesson2Refactored, restartLesson2, cleanupLesson2 } from './Lesson2Refactored.js';
+import { startLesson3 as startLesson3Refactored, restartLesson3, cleanupLesson3 } from './Lesson3Refactored.js';
 
 let tutorialStarted = false;
 let tutorialInitializing = false;
 let tutorialObjects = { owl: null, helmet: null, helmetTarget: null, owlWithHelmet: null, helmetAnimId: null, machine: null, machineBulb: null, machineArrowAnim: null };
 
+/**
+ * Clean up all lessons to ensure clean state when switching between them
+ */
+function cleanupAllLessons() {
+  try {
+    cleanupLesson1();
+  } catch (e) {
+    console.warn('[Tutorial] Error cleaning up Lesson 1:', e);
+  }
+  try {
+    cleanupLesson2();
+  } catch (e) {
+    console.warn('[Tutorial] Error cleaning up Lesson 2:', e);
+  }
+  try {
+    cleanupLesson3();
+  } catch (e) {
+    console.warn('[Tutorial] Error cleaning up Lesson 3:', e);
+  }
+}
+
 export async function startTutorial() {
+  // Use refactored version
+  cleanupAllLessons();
+  return startLesson1Refactored();
+}
+
+// Keep original implementation as fallback
+export async function startTutorialOriginal() {
   if (tutorialStarted) return;
   tutorialStarted = true;
   // reflect current lesson in the URL
@@ -183,6 +214,13 @@ export async function startTutorial() {
 
 // Reset tutorial state and restart lesson 1 without overlays
 export async function startTutorialDirect() {
+  // Use refactored version
+  cleanupAllLessons();
+  return restartLesson1();
+}
+
+// Keep original implementation as fallback
+export async function startTutorialDirectOriginal() {
   if (tutorialInitializing) return;
   tutorialInitializing = true;
   // Stop any running animations
@@ -216,6 +254,13 @@ export async function startTutorialDirect() {
 
 // --- Second tutorial: shift-select and drag to toolbox ---
 export async function startSecondTutorial() {
+  // Use refactored version
+  cleanupAllLessons();
+  return startLesson2Refactored();
+}
+
+// Keep original implementation as fallback
+export async function startSecondTutorialOriginal() {
   // Disable marquee box-selection so user must Shift+click to multi-select
   if (canvas) {
     canvas.selection = true; // keep selection enabled so shift-click works
@@ -521,6 +566,13 @@ export async function prepareLesson2State() {
 
 // --- Third tutorial: Maker Machine spawn off-canvas and arrow indicator ---
 export async function startThirdTutorial() {
+  // Use refactored version
+  cleanupAllLessons();
+  return startLesson3Refactored();
+}
+
+// Keep original implementation as fallback
+export async function startThirdTutorialOriginal() {
   // reflect current lesson in the URL
   try { location.hash = 'lesson=3'; } catch (e) {}
 

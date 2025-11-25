@@ -35,6 +35,17 @@ export function centerCanvas() {
   canvas.renderAll();
 }
 
+/**
+ * Reset viewport to default (zoom 1.0, centered)
+ * Useful when starting a new lesson to ensure consistent starting position
+ */
+export function resetViewport() {
+  if (!canvas) return;
+  // Reset to zoom = 1.0, no pan offset
+  canvas.setViewportTransform([1, 0, 0, 1, 0, 0]);
+  canvas.requestRenderAll();
+}
+
 // Input / panning handlers
 let isPanning = false;
 let lastPos = { x: 0, y: 0 };
@@ -247,13 +258,29 @@ function setupInputHandlers() {
   canvas.on('mouse:wheel', function(opt) {
     const e = opt.e;
     if (e.ctrlKey) {
+      // Zoom with Ctrl+Wheel
       const delta = e.deltaY;
       let zoom = canvas.getZoom();
+      const oldZoom = zoom;
       zoom *= 0.999 ** delta;
       zoom = Math.max(0.25, Math.min(6, zoom));
-      const pointer = canvas.getPointer(e);
-      canvas.zoomToPoint(pointer, zoom);
+      
+      // Get current viewport transform
+      const vpt = canvas.viewportTransform;
+      
+      // Calculate the center point of the current viewport in canvas coordinates
+      const centerX = (canvas.getWidth() / 2 - vpt[4]) / oldZoom;
+      const centerY = (canvas.getHeight() / 2 - vpt[5]) / oldZoom;
+      
+      // Calculate new viewport transform to keep center point centered
+      const newVptX = canvas.getWidth() / 2 - centerX * zoom;
+      const newVptY = canvas.getHeight() / 2 - centerY * zoom;
+      
+      // Apply new zoom and pan
+      canvas.setViewportTransform([zoom, 0, 0, zoom, newVptX, newVptY]);
+      canvas.requestRenderAll();
     } else {
+      // Pan with wheel (no Ctrl)
       const vpt = canvas.viewportTransform;
       vpt[5] += -e.deltaY;
       canvas.setViewportTransform(vpt);
