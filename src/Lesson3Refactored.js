@@ -84,8 +84,8 @@ function updateInstructionPanel() {
       <p>Laten we de creativiteits-machine starten!</p>
       <ol>
         <li>Volg de <span style="color:#1976d2">blauwe pijl</span> om de machine te vinden.</li>
-        <li><i class="fa-solid fa-hand"></i>&nbsp; Klik en sleep met de midden-muis knop om te <strong>pannen</strong> (verschuiven).</li>
-        <li><strong>Ctrl + Scroll</strong> om in en uit te <strong>zoomen</strong>.</li>
+        <li><img src="assets/icons/middle-click.svg" alt="Middle click" style="width:30px;height:30px;vertical-align:middle">&nbsp; Klik en sleep met de midden-muis knop om te <strong>pannen</strong> (verschuiven).</li>
+        <li><img src="assets/icons/ctrl-control-button.svg" alt="Control button" style="width:30px;height:30px;vertical-align:middle">&nbsp; + <img src="assets/icons/scroll-wheel.svg" alt="Scroll wheel" style="width:30px;height:30px;vertical-align:middle">&nbsp; om in en uit te <strong>zoomen</strong>.</li>
         <li>Zoom ver genoeg in op de machine om de <strong>startknop</strong> te vinden.</li>
         <li>Klik op de startknop om de machine aan te zetten!</li>
       </ol>

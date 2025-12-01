@@ -2,6 +2,94 @@ import { initCanvas, centerCanvas, canvas } from './canvas.js';
 import { installWelcomeOverlay, createSelectOverlayButton } from './overlay.js';
 import { startTutorial, startTutorialDirect, startSecondTutorial, prepareLesson2State, startThirdTutorial } from './tutorial.js';
 
+// Device detection - check for desktop/laptop with mouse
+function isDesktopWithMouse() {
+  const checks = {
+    hasFinePrimaryPointer: false,
+    hasLargeScreen: false,
+    isNotMobileUA: false,
+    hasHoverSupport: false
+  };
+
+  // Check 1: Primary pointer is "fine" (mouse/trackpad) not "coarse" (touch)
+  if (window.matchMedia && window.matchMedia('(pointer: fine)').matches) {
+    checks.hasFinePrimaryPointer = true;
+  }
+
+  // Check 2: Screen size - desktop typically > 1024px width
+  if (window.innerWidth >= 1024) {
+    checks.hasLargeScreen = true;
+  }
+
+  // Check 3: User agent doesn't contain mobile/tablet identifiers
+  const ua = navigator.userAgent.toLowerCase();
+  const mobileKeywords = ['android', 'webos', 'iphone', 'ipad', 'ipod', 'blackberry', 'windows phone', 'mobile'];
+  const isMobile = mobileKeywords.some(keyword => ua.includes(keyword));
+  if (!isMobile) {
+    checks.isNotMobileUA = true;
+  }
+
+  // Check 4: Hover support (typically indicates mouse)
+  if (window.matchMedia && window.matchMedia('(hover: hover)').matches) {
+    checks.hasHoverSupport = true;
+  }
+
+  // Require at least 3 out of 4 checks to pass
+  const passedChecks = Object.values(checks).filter(Boolean).length;
+  return passedChecks >= 3;
+}
+
+function showUnsupportedDeviceOverlay() {
+  const overlay = document.createElement('div');
+  overlay.id = 'unsupported-device-overlay';
+  overlay.style.position = 'fixed';
+  overlay.style.top = '0';
+  overlay.style.left = '0';
+  overlay.style.width = '100%';
+  overlay.style.height = '100%';
+  overlay.style.background = 'rgba(0, 0, 0, 0.9)';
+  overlay.style.zIndex = '999999';
+  overlay.style.display = 'flex';
+  overlay.style.flexDirection = 'column';
+  overlay.style.alignItems = 'center';
+  overlay.style.justifyContent = 'center';
+  overlay.style.color = 'white';
+  overlay.style.padding = '20px';
+  overlay.style.textAlign = 'center';
+
+  const icon = document.createElement('div');
+  icon.style.fontSize = '64px';
+  icon.style.marginBottom = '20px';
+  icon.innerHTML = '🖱️';
+
+  const title = document.createElement('h1');
+  title.style.fontSize = '28px';
+  title.style.marginBottom = '16px';
+  title.textContent = 'Computer met muis vereist';
+
+  const message = document.createElement('p');
+  message.style.fontSize = '18px';
+  message.style.maxWidth = '600px';
+  message.style.lineHeight = '1.6';
+  message.innerHTML = `
+    Deze Inkscape tutorials zijn ontworpen voor desktop- of laptopcomputers met een fysieke muis.<br><br>
+    <strong>Toegang tot deze tutorial is mogelijk vanaf:</strong><br>
+    • Een desktopcomputer of laptop<br>
+    • Gebruik van een fysieke muis (geen touchpad of touchscreen)
+  `;
+
+  overlay.appendChild(icon);
+  overlay.appendChild(title);
+  overlay.appendChild(message);
+  document.body.appendChild(overlay);
+}
+
+// Check device compatibility before initializing
+if (!isDesktopWithMouse()) {
+  showUnsupportedDeviceOverlay();
+  throw new Error('Unsupported device: Desktop with mouse required');
+}
+
 // Initialize canvas
 initCanvas('c');
 centerCanvas();

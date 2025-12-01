@@ -83,7 +83,7 @@ function updateInstructionPanel() {
       <p>Help het uiltje zich klaar te maken voor de maakplaats!</p>
       <p>Zet de helm op zijn hoofd.</p>
       <ul>
-        <li><img src="assets/icons/left-click.svg" alt="Left click" style="width:20px;height:20px;vertical-align:middle">&nbsp; Linker muisknop: Selecteer de helm</li>
+        <li><img src="assets/icons/left-click.svg" alt="Left click" style="width:30px;height:30px;vertical-align:middle">&nbsp; Linker muisknop: Selecteer de helm</li>
         <li><i class="fa-solid fa-arrows-up-down-left-right"></i>&nbsp; Klik en sleep om te verplaatsen</li>
         <li><i class="fa-solid fa-hand-pointer"></i>&nbsp; Laat los om te plaatsen</li>
       </ul>

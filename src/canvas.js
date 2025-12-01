@@ -1,7 +1,12 @@
 // Canvas module: initialize Fabric canvas and handlers
+import { enableInkscapeTransformMode } from './InkscapeTransformMode.js';
+
 export let canvas = null;
 // When false, starting a marquee (box) selection by dragging on empty canvas is disabled.
 export let allowBoxSelection = true;
+
+// Store cleanup function for Inkscape transform mode
+let inkscapeTransformCleanup = null;
 
 export function initCanvas(canvasId = 'c') {
   canvas = new fabric.Canvas(canvasId, {
@@ -13,6 +18,10 @@ export function initCanvas(canvasId = 'c') {
   fitCanvas();
   window.addEventListener('resize', () => { fitCanvas(); if (canvas) canvas.requestRenderAll(); });
   setupInputHandlers();
+  
+  // Enable Inkscape-like transform behavior (click once for scale, twice for rotate)
+  inkscapeTransformCleanup = enableInkscapeTransformMode(canvas);
+  
   return canvas;
 }
 
@@ -368,3 +377,6 @@ export function addSvgGroupToCanvas(svgGroup) {
   svgGroup.setCoords();
   canvas.requestRenderAll();
 }
+
+// Re-export Inkscape transform mode utilities for use in tutorials
+export { forceScaleMode, forceRotateMode, getCurrentMode, TRANSFORM_MODE } from './InkscapeTransformMode.js';

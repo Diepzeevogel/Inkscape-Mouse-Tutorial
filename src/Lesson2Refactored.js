@@ -71,7 +71,7 @@ function updateInstructionPanel() {
       <p>Oh nee! Al het gereedschap is uit de koffer gevallen.</p>
       <p>Steek jij ze er terug in?</p>
       <ol>
-        <li>Houd <strong>Shift</strong> ingedrukt en klik op alle gereedschappen om ze te selecteren.</li>
+        <li><img src="assets/icons/shift-button.svg" alt="Shift button" style="width:30px;height:30px;vertical-align:middle">&nbsp; + <img src="assets/icons/left-click.svg" alt="Left click" style="width:30px;height:30px;vertical-align:middle">&nbsp; Houd <strong>Shift</strong> ingedrukt en klik op alle gereedschappen om ze te selecteren.</li>
         <li>Als je <strong>al</strong> het gereedschap geselecteerd heb, sleep je het naar de gereedschapskist.</li>
       </ol>
       <p>Probeer het ook met een selectievak. Klik en sleep een rechthoek om meerdere gereedschappen tegelijk te selecteren.</p>
