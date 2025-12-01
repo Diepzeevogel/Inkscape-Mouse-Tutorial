@@ -87,3 +87,28 @@ export const SVG_IDS = {
     GEAR: 'gear'
   }
 };
+
+// Inkscape Transform Mode Constants
+export const TRANSFORM_MODE = {
+  // Icon Configuration
+  ICON_SIZE: 16,
+  HANDLE_SIZE: 24,
+  
+  // Visual Styling
+  BORDER_COLOR: '#5F5FD7',
+  CORNER_COLOR: '#000000',
+  BORDER_SCALE_FACTOR: 0.3,
+  BORDER_DASH_ARRAY: [5, 5],
+  
+  // Selection Colors
+  SELECTION_BACKGROUND: 'rgba(95, 95, 215, 0.05)',
+  SELECTION_BORDER_COLOR: '#5F5FD7',
+  SELECTION_LINE_WIDTH: 1,
+  
+  // Interaction Thresholds
+  DRAG_THRESHOLD: 5,
+  
+  // Asset Paths
+  ICON_SCALE_HANDLE: 'assets/icons/transform/arrow-scale-handle.svg',
+  ICON_ROTATE_HANDLE: 'assets/icons/transform/arrow-rotate-handle.svg'
+};

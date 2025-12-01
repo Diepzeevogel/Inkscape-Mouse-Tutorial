@@ -10,21 +10,21 @@
  *   enableInkscapeTransformMode(canvas);
  */
 
+import { TRANSFORM_MODE as CONFIG } from './constants.js';
+
 // Transform modes
 const MODE = {
   SCALE: 'scale',
   ROTATE: 'rotate'
 };
 
-// Icon display size (in pixels)
-const ICON_SIZE = 16;
-
-// Track the current mode for each object
+// Track the current mode for each object using WeakMap for automatic garbage collection
 const objectModes = new WeakMap();
 
-// Track the currently selected object to detect re-clicks
+// Selection state tracking
 let currentSelectedObject = null;
-let justSelected = false;  // Flag to prevent immediate toggle after selection
+let justSelected = false;  // Prevents immediate mode toggle after selection
+let previousSelectionCount = 0;
 
 // Icon cache for custom handles
 const iconCache = {
@@ -32,8 +32,27 @@ const iconCache = {
   rotateHandle: null
 };
 
+// Debug mode toggle (set to false for production)
+const DEBUG_MODE = false;
+
 /**
- * Load icon images for custom handles
+ * Debug logger - only logs when DEBUG_MODE is enabled
+ * @param {string} message - Log message
+ * @param {Object} data - Optional data object to log
+ */
+function debugLog(message, data = null) {
+  if (DEBUG_MODE) {
+    if (data) {
+      console.log(message, data);
+    } else {
+      console.log(message);
+    }
+  }
+}
+
+/**
+ * Load icon images for custom transform handles
+ * @returns {Promise<void>}
  */
 async function loadIcons() {
   return new Promise((resolve) => {
@@ -43,7 +62,7 @@ async function loadIcons() {
     const checkComplete = () => {
       loadedCount++;
       if (loadedCount === totalIcons) {
-        console.log('[InkscapeTransformMode] Icons loaded successfully');
+        debugLog('[InkscapeTransformMode] Icons loaded successfully');
         resolve();
       }
     };
@@ -54,11 +73,11 @@ async function loadIcons() {
       iconCache.scaleHandle = scaleImg;
       checkComplete();
     };
-    scaleImg.onerror = (e) => {
+    scaleImg.onerror = () => {
       console.error('[InkscapeTransformMode] Failed to load scale handle icon');
       checkComplete();
     };
-    scaleImg.src = 'assets/icons/transform/arrow-scale-handle.svg';
+    scaleImg.src = CONFIG.ICON_SCALE_HANDLE;
     
     // Load rotate handle icon
     const rotateImg = new Image();
@@ -66,38 +85,37 @@ async function loadIcons() {
       iconCache.rotateHandle = rotateImg;
       checkComplete();
     };
-    rotateImg.onerror = (e) => {
+    rotateImg.onerror = () => {
       console.error('[InkscapeTransformMode] Failed to load rotate handle icon');
       checkComplete();
     };
-    rotateImg.src = 'assets/icons/transform/arrow-rotate-handle.svg';
+    rotateImg.src = CONFIG.ICON_ROTATE_HANDLE;
   });
 }
 
 /**
  * Custom render function for scale handles with icon
  * @param {number} angle - Rotation angle in degrees
+ * @returns {Function} Rendering function for Fabric.js control
  */
 function createScaleIconRenderer(angle) {
   return function(ctx, left, top, styleOverride, fabricObject) {
     const icon = iconCache.scaleHandle;
     if (!icon || !icon.complete) {
       // Fallback to default square rendering if icon not loaded
-      const size = ICON_SIZE;
       ctx.save();
-      ctx.fillStyle = fabricObject.cornerColor || '#000';
-      ctx.fillRect(left - size/2, top - size/2, size, size);
+      ctx.fillStyle = fabricObject.cornerColor || CONFIG.CORNER_COLOR;
+      ctx.fillRect(left - CONFIG.ICON_SIZE / 2, top - CONFIG.ICON_SIZE / 2, CONFIG.ICON_SIZE, CONFIG.ICON_SIZE);
       ctx.restore();
       return;
     }
     
-    const size = ICON_SIZE;
-    // Add object's rotation to the icon's base rotation
+    // Add object's rotation to the icon's base rotation for proper orientation
     const totalRotation = angle + (fabricObject.angle || 0);
     ctx.save();
     ctx.translate(left, top);
     ctx.rotate((totalRotation * Math.PI) / 180);
-    ctx.drawImage(icon, -size / 2, -size / 2, size, size);
+    ctx.drawImage(icon, -CONFIG.ICON_SIZE / 2, -CONFIG.ICON_SIZE / 2, CONFIG.ICON_SIZE, CONFIG.ICON_SIZE);
     ctx.restore();
   };
 }
@@ -105,27 +123,26 @@ function createScaleIconRenderer(angle) {
 /**
  * Custom render function for rotation handles with icon
  * @param {number} angle - Rotation angle in degrees
+ * @returns {Function} Rendering function for Fabric.js control
  */
 function createRotateIconRenderer(angle) {
   return function(ctx, left, top, styleOverride, fabricObject) {
     const icon = iconCache.rotateHandle;
     if (!icon || !icon.complete) {
       // Fallback to default square rendering if icon not loaded
-      const size = ICON_SIZE;
       ctx.save();
-      ctx.fillStyle = fabricObject.cornerColor || '#000';
-      ctx.fillRect(left - size/2, top - size/2, size, size);
+      ctx.fillStyle = fabricObject.cornerColor || CONFIG.CORNER_COLOR;
+      ctx.fillRect(left - CONFIG.ICON_SIZE / 2, top - CONFIG.ICON_SIZE / 2, CONFIG.ICON_SIZE, CONFIG.ICON_SIZE);
       ctx.restore();
       return;
     }
     
-    const size = ICON_SIZE;
-    // Add object's rotation to the icon's base rotation
+    // Add object's rotation to the icon's base rotation for proper orientation
     const totalRotation = angle + (fabricObject.angle || 0);
     ctx.save();
     ctx.translate(left, top);
     ctx.rotate((totalRotation * Math.PI) / 180);
-    ctx.drawImage(icon, -size / 2, -size / 2, size, size);
+    ctx.drawImage(icon, -CONFIG.ICON_SIZE / 2, -CONFIG.ICON_SIZE / 2, CONFIG.ICON_SIZE, CONFIG.ICON_SIZE);
     ctx.restore();
   };
 }
@@ -135,21 +152,19 @@ loadIcons();
 
 /**
  * Custom rotation handler that rotates around the bounding box center
+ * @param {Event} eventData - Mouse event data
+ * @param {Object} transform - Fabric.js transform object
+ * @param {number} x - Mouse X coordinate
+ * @param {number} y - Mouse Y coordinate
+ * @returns {boolean} Always returns true to indicate transform was applied
  */
 function rotateAroundCenter(eventData, transform, x, y) {
   const target = transform.target;
-  
-  // Get the center of the bounding box
   const center = target.getCenterPoint();
   
   // Calculate angle from center to mouse position
   const angle = Math.atan2(y - center.y, x - center.x);
-  
-  // Calculate the angle relative to the object's initial state
-  const angleOffset = angle - Math.atan2(
-    transform.ey - center.y,
-    transform.ex - center.x
-  );
+  const angleOffset = angle - Math.atan2(transform.ey - center.y, transform.ex - center.x);
   
   // Apply rotation
   target.rotate((angleOffset * 180 / Math.PI) + transform.theta);
@@ -158,7 +173,31 @@ function rotateAroundCenter(eventData, transform, x, y) {
 }
 
 /**
+ * Apply ActiveSelection-specific styling for multi-object selections
+ * @param {fabric.ActiveSelection} obj - The ActiveSelection object
+ * @param {fabric.Canvas} canvas - The canvas instance
+ */
+function applyActiveSelectionStyling(obj, canvas) {
+  if (obj.type !== 'activeSelection') return;
+  
+  obj.set({
+    selectionBackgroundColor: CONFIG.SELECTION_BACKGROUND,
+    selectionBorderColor: CONFIG.SELECTION_BORDER_COLOR,
+    selectionLineWidth: CONFIG.SELECTION_LINE_WIDTH,
+    strokeWidth: 0
+  });
+  
+  // Also set on canvas to ensure consistency
+  if (canvas) {
+    canvas.selectionColor = CONFIG.SELECTION_BACKGROUND;
+    canvas.selectionBorderColor = CONFIG.SELECTION_BORDER_COLOR;
+    canvas.selectionLineWidth = CONFIG.SELECTION_LINE_WIDTH;
+  }
+}
+
+/**
  * Set object to scale mode (Inkscape first click behavior)
+ * @param {fabric.Object} obj - The Fabric.js object to configure
  */
 function setScaleMode(obj) {
   if (!obj) return;
@@ -167,123 +206,98 @@ function setScaleMode(obj) {
   
   // Show all handles (corners and edges for scaling)
   obj.setControlsVisibility({
-    mt: true,   // middle-top
-    mb: true,   // middle-bottom
-    ml: true,   // middle-left
-    mr: true,   // middle-right
-    tl: true,   // top-left corner
-    tr: true,   // top-right corner
-    bl: true,   // bottom-left corner
-    br: true,   // bottom-right corner
-    mtr: false  // rotation control - always hidden (we use corners instead)
+    mt: true, mb: true, ml: true, mr: true,
+    tl: true, tr: true, bl: true, br: true,
+    mtr: false  // Rotation control always hidden
   });
   
-  // Set corner controls to scaling behavior with custom icons
-  // Scale handle is oriented for middle-top, so rotate accordingly:
-  // tl: -45° (top-left diagonal)
+  // Configure corner controls for scaling with custom icons
   obj.controls.tl.actionHandler = fabric.controlsUtils.scalingEqually;
   obj.controls.tl.render = createScaleIconRenderer(-45);
-  
-  // tr: 45° (top-right diagonal)
   obj.controls.tr.actionHandler = fabric.controlsUtils.scalingEqually;
   obj.controls.tr.render = createScaleIconRenderer(45);
-  
-  // br: 135° (bottom-right diagonal)
   obj.controls.br.actionHandler = fabric.controlsUtils.scalingEqually;
   obj.controls.br.render = createScaleIconRenderer(135);
-  
-  // bl: -135° (bottom-left diagonal)
   obj.controls.bl.actionHandler = fabric.controlsUtils.scalingEqually;
   obj.controls.bl.render = createScaleIconRenderer(-135);
   
-  // Reset cursor handlers to default for scaling (remove custom handlers)
+  // Reset cursor handlers to default scaling behavior
   obj.controls.tl.cursorStyleHandler = fabric.controlsUtils.scaleSkewCursorStyleHandler;
   obj.controls.tr.cursorStyleHandler = fabric.controlsUtils.scaleSkewCursorStyleHandler;
   obj.controls.bl.cursorStyleHandler = fabric.controlsUtils.scaleSkewCursorStyleHandler;
   obj.controls.br.cursorStyleHandler = fabric.controlsUtils.scaleSkewCursorStyleHandler;
   
-  // Set edge controls to scaling behavior with custom icons
-  // mt: 0° (middle-top, original orientation)
+  // Configure edge controls for scaling with custom icons
   obj.controls.mt.actionHandler = fabric.controlsUtils.scalingYOrSkewingX;
   obj.controls.mt.render = createScaleIconRenderer(0);
-  
-  // mr: 90° (middle-right)
   obj.controls.mr.actionHandler = fabric.controlsUtils.scalingXOrSkewingY;
   obj.controls.mr.render = createScaleIconRenderer(90);
-  
-  // mb: 180° (middle-bottom)
   obj.controls.mb.actionHandler = fabric.controlsUtils.scalingYOrSkewingX;
   obj.controls.mb.render = createScaleIconRenderer(180);
-  
-  // ml: -90° (middle-left)
   obj.controls.ml.actionHandler = fabric.controlsUtils.scalingXOrSkewingY;
   obj.controls.ml.render = createScaleIconRenderer(-90);
   
-  // Visual feedback: standard border
+  // Apply visual styling
   obj.set({
-    borderColor: '#5F5FD7',
-    cornerColor: '#000000',
-    cornerSize: 24,  // Increased size for custom icons
+    borderColor: CONFIG.BORDER_COLOR,
+    cornerColor: CONFIG.CORNER_COLOR,
+    cornerSize: CONFIG.HANDLE_SIZE,
     transparentCorners: false,
-    borderScaleFactor: 0.3,
-    borderDashArray: [5, 5]
+    borderScaleFactor: CONFIG.BORDER_SCALE_FACTOR,
+    borderDashArray: CONFIG.BORDER_DASH_ARRAY  // Solid border for scale mode
   });
+  
+  // Apply ActiveSelection-specific styling if needed
+  applyActiveSelectionStyling(obj, obj.canvas);
 }
 
 /**
  * Set object to rotation mode (Inkscape second click behavior)
+ * @param {fabric.Object} obj - The Fabric.js object to configure
  */
 function setRotateMode(obj) {
   if (!obj) return;
   
   objectModes.set(obj, MODE.ROTATE);
   
-  // Keep corners visible, hide edges
+  // Show only corners (hide edge handles)
   obj.setControlsVisibility({
-    mt: false,   // hide middle-top
-    mb: false,   // hide middle-bottom
-    ml: false,   // hide middle-left
-    mr: false,   // hide middle-right
-    tl: true,    // show corners - they now rotate
-    tr: true,
-    bl: true,
-    br: true,
-    mtr: false   // rotation control - hidden (we use corners instead)
+    mt: false, mb: false, ml: false, mr: false,
+    tl: true, tr: true, bl: true, br: true,
+    mtr: false  // Rotation control always hidden
   });
   
-  // Change corner controls to use custom rotation around center with custom icons
-  // Rotate handle is oriented for bottom-left, so rotate accordingly:
+  // Configure corner controls for rotation with custom icons
   const rotationCursorHandler = () => 'grab';
   
-  // bl: 0° (bottom-left, original orientation)
   obj.controls.bl.actionHandler = rotateAroundCenter;
   obj.controls.bl.cursorStyleHandler = rotationCursorHandler;
   obj.controls.bl.render = createRotateIconRenderer(0);
   
-  // tl: 90° (top-left)
   obj.controls.tl.actionHandler = rotateAroundCenter;
   obj.controls.tl.cursorStyleHandler = rotationCursorHandler;
   obj.controls.tl.render = createRotateIconRenderer(90);
   
-  // tr: 180° (top-right)
   obj.controls.tr.actionHandler = rotateAroundCenter;
   obj.controls.tr.cursorStyleHandler = rotationCursorHandler;
   obj.controls.tr.render = createRotateIconRenderer(180);
   
-  // br: 270° (bottom-right)
   obj.controls.br.actionHandler = rotateAroundCenter;
   obj.controls.br.cursorStyleHandler = rotationCursorHandler;
   obj.controls.br.render = createRotateIconRenderer(270);
   
-  // Visual feedback: different style for rotation mode
+  // Apply visual styling with dashed border to indicate rotation mode
   obj.set({
-    borderColor: '#5F5FD7',
-    cornerColor: '#000000',
-    cornerSize: 24,  // Increased size for custom icons
+    borderColor: CONFIG.BORDER_COLOR,
+    cornerColor: CONFIG.CORNER_COLOR,
+    cornerSize: CONFIG.HANDLE_SIZE,
     transparentCorners: false,
-    borderScaleFactor: 0.3,
-    borderDashArray: [5, 5]  // Dashed border to indicate rotation mode
+    borderScaleFactor: CONFIG.BORDER_SCALE_FACTOR,
+    borderDashArray: CONFIG.BORDER_DASH_ARRAY
   });
+  
+  // Apply ActiveSelection-specific styling if needed
+  applyActiveSelectionStyling(obj, obj.canvas);
 }
 
 /**
@@ -295,11 +309,17 @@ function getMode(obj) {
 
 /**
  * Toggle between scale and rotate modes
+ * @param {fabric.Object} obj - The object to toggle mode for
  */
 function toggleMode(obj) {
   if (!obj) return;
   
   const currentMode = getMode(obj);
+  debugLog('[TransformMode] toggleMode called:', {
+    objType: obj.type,
+    currentMode: currentMode,
+    willSwitchTo: currentMode === MODE.SCALE ? 'ROTATE' : 'SCALE'
+  });
   
   if (currentMode === MODE.SCALE) {
     setRotateMode(obj);
@@ -310,104 +330,207 @@ function toggleMode(obj) {
 
 /**
  * Handle selection created - always start in scale mode
+ * @param {Object} e - Fabric.js selection event
+ * @param {fabric.Canvas} canvas - The canvas instance
  */
 function handleSelectionCreated(e, canvas) {
   const selected = e.selected || [];
+  const activeObject = canvas.getActiveObject();
+  
+  debugLog('[TransformMode] selection:created', {
+    selectedCount: selected.length,
+    activeObjectType: activeObject?.type
+  });
   
   if (selected.length === 1) {
-    const obj = selected[0];
-    currentSelectedObject = obj;
-    justSelected = true;  // Mark that we just selected this object
-    setScaleMode(obj);
-    canvas.requestRenderAll();
-  } else if (selected.length > 1) {
-    // For multiple selections, use scale mode
-    selected.forEach(obj => setScaleMode(obj));
-    currentSelectedObject = null;
-    justSelected = false;
-    canvas.requestRenderAll();
+    currentSelectedObject = selected[0];
+    justSelected = true;
+    setScaleMode(selected[0]);
+    previousSelectionCount = 1;
+  } else if (selected.length > 1 && activeObject) {
+    // For multiple selections, apply scale mode to the ActiveSelection object
+    currentSelectedObject = activeObject;
+    justSelected = true;
+    setScaleMode(activeObject);
+    previousSelectionCount = selected.length;
   }
+  
+  canvas.requestRenderAll();
 }
 
 /**
- * Handle selection updated - reset to scale mode for new objects
+ * Calculate the actual object count for the current selection
+ * @param {fabric.Object|null} activeObject - The active object
+ * @returns {number} Number of objects in the selection
+ */
+function getActualSelectionCount(activeObject) {
+  if (!activeObject) return 0;
+  if (activeObject.type === 'activeSelection') {
+    return activeObject._objects?.length || 0;
+  }
+  return 1;
+}
+
+/**
+ * Handle selection updated - manages mode preservation when modifying selections
+ * This handles complex cases like:
+ * - Shift-clicking to add objects to selection
+ * - Shift-clicking to remove objects from selection
+ * - Deselecting down to a single object
+ * @param {Object} e - Fabric.js selection event
+ * @param {fabric.Canvas} canvas - The canvas instance
  */
 function handleSelectionUpdated(e, canvas) {
   const selected = e.selected || [];
+  const deselected = e.deselected || [];
+  const activeObject = canvas.getActiveObject();
+  const actualCount = getActualSelectionCount(activeObject);
   
-  if (selected.length === 1) {
-    const obj = selected[0];
-    
-    // If selecting a different object, reset to scale mode
-    if (obj !== currentSelectedObject) {
-      currentSelectedObject = obj;
-      justSelected = true;  // Mark that we just selected this object
-      setScaleMode(obj);
-      canvas.requestRenderAll();
-    }
-  } else if (selected.length > 1) {
-    selected.forEach(obj => setScaleMode(obj));
-    currentSelectedObject = null;
-    justSelected = false;
-    canvas.requestRenderAll();
+  // Capture state BEFORE updating currentSelectedObject
+  const oldMode = currentSelectedObject ? getMode(currentSelectedObject) : null;
+  const wasActiveSelection = currentSelectedObject?.type === 'activeSelection';
+  
+  debugLog('[TransformMode] selection:updated', {
+    selectedCount: selected.length,
+    deselectedCount: deselected.length,
+    actualCount,
+    wasActiveSelection,
+    currentMode: oldMode
+  });
+  
+  // Handle single object selection/deselection
+  if (actualCount === 1 && activeObject?.type !== 'activeSelection') {
+    handleSingleObjectSelection(activeObject, selected, deselected, wasActiveSelection, oldMode, canvas);
+  } 
+  // Handle multi-object selection
+  else if (actualCount > 1 || activeObject?.type === 'activeSelection') {
+    handleMultiObjectSelection(activeObject, selected, deselected, wasActiveSelection, oldMode, actualCount, canvas);
   }
 }
 
 /**
- * Handle mouse down - detect clicks on already-selected objects to toggle mode
+ * Handle selection update for single objects
+ * @param {fabric.Object} obj - The selected object
+ * @param {Array} selected - Newly selected objects
+ * @param {Array} deselected - Newly deselected objects
+ * @param {boolean} wasActiveSelection - Whether previous selection was multi-object
+ * @param {string|null} previousMode - Previous transform mode
+ * @param {fabric.Canvas} canvas - The canvas instance
+ */
+function handleSingleObjectSelection(obj, selected, deselected, wasActiveSelection, previousMode, canvas) {
+  const isDeselectionToOne = wasActiveSelection && deselected.length > 0 && selected.length === 0;
+  const isDifferentObject = obj !== currentSelectedObject;
+  
+  if (isDeselectionToOne) {
+    // Preserve mode when deselecting from multi-selection to single object
+    debugLog('[TransformMode] Deselected to single object - preserving mode:', previousMode);
+    currentSelectedObject = obj;
+    justSelected = true;
+    
+    if (previousMode === MODE.ROTATE) {
+      setRotateMode(obj);
+    } else {
+      setScaleMode(obj);
+    }
+  } else if (isDifferentObject) {
+    // New object selected - reset to scale mode
+    debugLog('[TransformMode] New single object selection');
+    currentSelectedObject = obj;
+    justSelected = true;
+    setScaleMode(obj);
+  }
+  
+  previousSelectionCount = 1;
+  canvas.requestRenderAll();
+}
+
+/**
+ * Handle selection update for multiple objects (ActiveSelection)
+ * @param {fabric.ActiveSelection} activeObject - The active selection
+ * @param {Array} selected - Newly selected objects
+ * @param {Array} deselected - Newly deselected objects
+ * @param {boolean} wasActiveSelection - Whether previous selection was multi-object
+ * @param {string|null} previousMode - Previous transform mode
+ * @param {number} actualCount - Actual number of objects in selection
+ * @param {fabric.Canvas} canvas - The canvas instance
+ */
+function handleMultiObjectSelection(activeObject, selected, deselected, wasActiveSelection, previousMode, actualCount, canvas) {
+  const isModifyingExisting = wasActiveSelection && (selected.length > 0 || deselected.length > 0);
+  
+  debugLog('[TransformMode] Multi-selection', {
+    isModifyingExisting,
+    previousMode,
+    willPreserve: isModifyingExisting && previousMode === MODE.ROTATE
+  });
+  
+  currentSelectedObject = activeObject;
+  justSelected = true; // Always prevent immediate toggle for ActiveSelection
+  
+  // Preserve mode when modifying existing selection, otherwise use scale mode
+  if (isModifyingExisting && previousMode === MODE.ROTATE) {
+    setRotateMode(activeObject);
+  } else {
+    setScaleMode(activeObject);
+  }
+  
+  previousSelectionCount = actualCount;
+  canvas.requestRenderAll();
+}
+
+/**
+ * Handle mouse down - track click position to distinguish clicks from drags
+ * @param {Object} e - Fabric.js mouse event
+ * @param {fabric.Canvas} canvas - The canvas instance
  */
 function handleMouseDown(e, canvas) {
-  // Only process if we have an active object
   const activeObject = canvas.getActiveObject();
   if (!activeObject) return;
   
-  // Check if we're clicking on a control handle - if so, don't toggle mode
-  if (e.transform && e.transform.corner) {
-    // User is interacting with a control handle, don't toggle
-    return;
-  }
+  // Don't track if clicking on a control handle
+  if (e.transform && e.transform.corner) return;
   
-  // Check if clicking on the active object itself (not on controls)
   const target = e.target;
+  const isPartOfActiveSelection = activeObject.type === 'activeSelection' 
+    && activeObject._objects 
+    && activeObject._objects.includes(target);
   
-  if (target === activeObject && activeObject === currentSelectedObject) {
-    // Store the mouse position to detect dragging vs clicking
+  // Track mouse position if clicking on the active object
+  if ((target === activeObject || isPartOfActiveSelection) && activeObject === currentSelectedObject) {
     activeObject._mouseDownX = e.pointer.x;
     activeObject._mouseDownY = e.pointer.y;
-    activeObject._wasDragged = false;
   }
 }
 
 /**
- * Handle mouse up - toggle mode only if object wasn't dragged
+ * Handle mouse up - toggle mode only if object was clicked (not dragged)
+ * @param {Object} e - Fabric.js mouse event
+ * @param {fabric.Canvas} canvas - The canvas instance
  */
 function handleMouseUp(e, canvas) {
   const activeObject = canvas.getActiveObject();
   if (!activeObject) return;
   
   const target = e.target;
+  const isPartOfActiveSelection = activeObject.type === 'activeSelection' 
+    && activeObject._objects 
+    && activeObject._objects.includes(target);
   
-  if (target === activeObject && activeObject === currentSelectedObject) {
-    // If this object was just selected, don't toggle yet
+  if ((target === activeObject || isPartOfActiveSelection) && activeObject === currentSelectedObject) {
+    // Skip toggle if object was just selected
     if (justSelected) {
-      justSelected = false;  // Clear the flag
-      // Clean up tracking properties
+      justSelected = false;
       delete activeObject._mouseDownX;
       delete activeObject._mouseDownY;
       return;
     }
     
-    // Check if the object was dragged
+    // Check if object was dragged
     if (activeObject._mouseDownX !== undefined && activeObject._mouseDownY !== undefined) {
       const deltaX = Math.abs(e.pointer.x - activeObject._mouseDownX);
       const deltaY = Math.abs(e.pointer.y - activeObject._mouseDownY);
-      
-      // If mouse moved more than 5 pixels, consider it a drag, not a click
-      const dragThreshold = 5;
-      const wasDragged = deltaX > dragThreshold || deltaY > dragThreshold;
+      const wasDragged = deltaX > CONFIG.DRAG_THRESHOLD || deltaY > CONFIG.DRAG_THRESHOLD;
       
       if (!wasDragged) {
-        // It was a click (not a drag), toggle the mode
         toggleMode(activeObject);
         canvas.requestRenderAll();
       }
@@ -420,17 +543,20 @@ function handleMouseUp(e, canvas) {
 }
 
 /**
- * Handle selection cleared - reset tracking
+ * Handle selection cleared - reset all tracking state
+ * @param {Object} e - Fabric.js selection event
+ * @param {fabric.Canvas} canvas - The canvas instance
  */
 function handleSelectionCleared(e, canvas) {
   currentSelectedObject = null;
   justSelected = false;
+  previousSelectionCount = 0;
 }
 
 /**
  * Enable Inkscape-like transform mode behavior on a Fabric canvas
  * @param {fabric.Canvas} canvas - The Fabric.js canvas instance
- * @returns {Function} Cleanup function to remove the behavior
+ * @returns {Function} Cleanup function to remove event listeners and disable the behavior
  */
 export function enableInkscapeTransformMode(canvas) {
   if (!canvas) {
@@ -438,7 +564,7 @@ export function enableInkscapeTransformMode(canvas) {
     return () => {};
   }
   
-  // Create bound handlers
+  // Create bound event handlers
   const onSelectionCreated = (e) => handleSelectionCreated(e, canvas);
   const onSelectionUpdated = (e) => handleSelectionUpdated(e, canvas);
   const onSelectionCleared = (e) => handleSelectionCleared(e, canvas);
@@ -452,7 +578,7 @@ export function enableInkscapeTransformMode(canvas) {
   canvas.on('mouse:down', onMouseDown);
   canvas.on('mouse:up', onMouseUp);
   
-  console.log('[InkscapeTransformMode] Enabled Inkscape-like transform modes');
+  debugLog('[InkscapeTransformMode] Enabled Inkscape-like transform modes');
   
   // Return cleanup function
   return () => {
@@ -461,13 +587,14 @@ export function enableInkscapeTransformMode(canvas) {
     canvas.off('selection:cleared', onSelectionCleared);
     canvas.off('mouse:down', onMouseDown);
     canvas.off('mouse:up', onMouseUp);
-    console.log('[InkscapeTransformMode] Disabled');
+    debugLog('[InkscapeTransformMode] Disabled');
   };
 }
 
 /**
  * Manually set an object to scale mode
- * Useful for tutorial-specific control
+ * @param {fabric.Object} obj - The object to configure
+ * @param {fabric.Canvas} [canvas] - Optional canvas instance for rendering
  */
 export function forceScaleMode(obj, canvas) {
   setScaleMode(obj);
@@ -476,7 +603,8 @@ export function forceScaleMode(obj, canvas) {
 
 /**
  * Manually set an object to rotate mode
- * Useful for tutorial-specific control
+ * @param {fabric.Object} obj - The object to configure
+ * @param {fabric.Canvas} [canvas] - Optional canvas instance for rendering
  */
 export function forceRotateMode(obj, canvas) {
   setRotateMode(obj);
@@ -484,8 +612,9 @@ export function forceRotateMode(obj, canvas) {
 }
 
 /**
- * Get the current mode of an object
- * Returns 'scale' or 'rotate'
+ * Get the current transform mode of an object
+ * @param {fabric.Object} obj - The object to query
+ * @returns {string} 'scale' or 'rotate'
  */
 export function getCurrentMode(obj) {
   return getMode(obj);
