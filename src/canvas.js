@@ -13,11 +13,26 @@ export function initCanvas(canvasId = 'c') {
     selection: true,
     preserveObjectStacking: true,
     skipTargetFind: false,
-    backgroundColor: 'white'
+    backgroundColor: 'white',
+    // Inkscape-like per-pixel selection: requires clicking on actual stroke/fill
+    //perPixelTargetFind: true,
+    targetFindTolerance: 4  // 4px tolerance for easier clicking on strokes
   });
   fitCanvas();
   window.addEventListener('resize', () => { fitCanvas(); if (canvas) canvas.requestRenderAll(); });
   setupInputHandlers();
+  
+  // Ensure all future objects (including groups) use per-pixel target finding
+  const enablePerPixelOnObject = (obj) => {
+    if (!obj) return;
+    obj.perPixelTargetFind = true;
+    // Keep group selection behavior by default; avoid sub-target selection for lessons
+    // but still ensure the group itself uses per-pixel transparency checks.
+    if (obj.type === 'group' && Array.isArray(obj._objects)) {
+      obj._objects.forEach(child => { child.perPixelTargetFind = true; });
+    }
+  };
+  canvas.on('object:added', (e) => enablePerPixelOnObject(e.target));
   
   // Enable Inkscape-like transform behavior (click once for scale, twice for rotate)
   inkscapeTransformCleanup = enableInkscapeTransformMode(canvas);

@@ -161,10 +161,23 @@ forceRotateMode(selectedObject, canvas);
 2. **Reduced Clutter** - Only shows relevant controls for current task
 3. **Clear Visual Feedback** - Different colors/styles indicate mode
 4. **Prevents Accidents** - Can't accidentally rotate when trying to scale
+5. **Per-Pixel Selection** - Objects must be clicked on their actual stroke/fill, not just their bounding box
+
+## Per-Pixel Selection
+
+The canvas is configured with `perPixelTargetFind: true` for authentic Inkscape selection behavior:
+
+- **Unfilled objects**: Must click directly on the stroke (outline)
+- **Filled objects**: Can click anywhere on the fill or stroke
+- **Tolerance**: 4px around strokes for easier clicking
+- **Behavior**: Mimics Inkscape's precise selection model
+
+This makes the tutorial more realistic for Inkscape users, as they learn that empty shapes require clicking on the actual path.
 
 ## Future Enhancements
 
-- [ ] Add custom Inkscape-style handle graphics
+- [x] Add custom Inkscape-style handle graphics
+- [x] Per-pixel selection for authentic behavior
 - [ ] Show rotation center point indicator
 - [ ] Add keyboard shortcut to toggle modes (e.g., 'R' for rotate)
 - [ ] Tutorial tooltips explaining mode switch
