@@ -142,3 +142,19 @@ export const TRANSFORM_MODE = {
   ICON_SCALE_HANDLE: 'assets/icons/transform/arrow-scale-handle.svg',
   ICON_ROTATE_HANDLE: 'assets/icons/transform/arrow-rotate-handle.svg'
 };
+
+// Lesson Feature Flags
+export const LESSON_FEATURES = {
+  1: {
+    COPY_PASTE: false
+  },
+  2: {
+    COPY_PASTE: false
+  },
+  3: {
+    COPY_PASTE: false
+  },
+  4: {
+    COPY_PASTE: true
+  }
+};

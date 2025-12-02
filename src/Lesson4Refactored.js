@@ -9,7 +9,9 @@
 import { canvas, resetViewport } from './canvas.js';
 import { assetLoader } from './AssetLoader.js';
 import { FillStrokePanel } from './FillStrokePanel.js';
-import { ASSETS, SVG_IDS } from './constants.js';
+import { ASSETS, SVG_IDS, LESSON_FEATURES } from './constants.js';
+import { copyPasteController } from './CopyPasteController.js';
+import { undoRedoController } from './UndoRedoController.js';
 
 class Lesson4State {
   constructor() {
@@ -73,6 +75,14 @@ function updateInstructionPanel() {
         <li>Selecteer nu de punt van de schroevendraaier</li>
         <li>Geef deze een andere kleur</li>
       </ol>
+      <p><strong>Sneltoetsen:</strong></p>
+      <ul style="font-size: 0.9em; margin-top: 8px;">
+        <li><kbd>Ctrl+C</kbd> - Kopiëren</li>
+        <li><kbd>Ctrl+V</kbd> - Plakken</li>
+        <li><kbd>Delete</kbd> / <kbd>Backspace</kbd> - Verwijderen</li>
+        <li><kbd>Ctrl+Z</kbd> - Ongedaan maken</li>
+        <li><kbd>Ctrl+Y</kbd> - Opnieuw</li>
+      </ul>
       <p><strong>Let op:</strong> De objecten hebben geen vulling, alleen een streek. Je moet precies op de lijn klikken!</p>
     `;
   } catch (error) {
@@ -231,6 +241,13 @@ export async function startLesson4() {
     // Setup Fill & Stroke panel
     lesson4State.fillStrokePanel = setupFillStrokePanel();
 
+    // Enable copy-paste if configured for this lesson
+    if (LESSON_FEATURES[4]?.COPY_PASTE) {
+      copyPasteController.enable();
+      undoRedoController.enable();
+      console.log('[Lesson4] Copy-paste and undo/redo enabled (Ctrl+C/V/Z/Y, Delete)');
+    }
+
     canvas.requestRenderAll();
     console.log('[Lesson4] Started successfully');
 
@@ -257,6 +274,10 @@ export function cleanupLesson4() {
   if (lesson4State.fillStrokePanel) {
     lesson4State.fillStrokePanel.destroy();
   }
+
+  // Disable copy-paste and undo/redo
+  copyPasteController.disable();
+  undoRedoController.disable();
 
   // Clear canvas event listeners
   canvas.off('selection:created');

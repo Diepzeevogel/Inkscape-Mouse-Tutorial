@@ -217,6 +217,9 @@ export class FillStrokePanel {
       obj.setPositionByOrigin(center, 'center', 'center');
       obj.setCoords();
       this.canvas.renderAll();
+      
+      // Fire modified event so undo/redo can track this change
+      this.canvas.fire('object:modified', { target: obj });
     };
 
     widthSlider.addEventListener('input', (e) => {
@@ -372,6 +375,9 @@ export class FillStrokePanel {
     // Mark object as dirty to force re-render
     this.activeObject.dirty = true;
     this.canvas.renderAll();
+    
+    // Fire modified event so undo/redo can track this change
+    this.canvas.fire('object:modified', { target: this.activeObject });
   }
 
   togglePanes() {
@@ -407,6 +413,9 @@ export class FillStrokePanel {
         this.activeObject.set({ fill: null });
       }
       this.canvas.renderAll();
+      
+      // Fire modified event so undo/redo can track this change
+      this.canvas.fire('object:modified', { target: this.activeObject });
       return;
     }
     if (mode === 'solid') {
