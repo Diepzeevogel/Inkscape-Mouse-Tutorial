@@ -384,9 +384,46 @@ function showCompletionMessage() {
       </ul>
       <p>Je bent nu klaar om te leren <strong>tekenen in Inkscape!</strong></p>
     `;
+    
+    // Add next lesson button
+    showNextButton();
   } catch (error) {
     console.warn('[Lesson5] Failed to show completion:', error);
   }
+}
+
+/**
+ * Show next lesson button
+ */
+function showNextButton() {
+  const panel = document.getElementById('panel');
+  if (!panel) return;
+  
+  let button = document.getElementById('next-tutorial-btn-5');
+  if (button) return;
+  
+  button = document.createElement('button');
+  button.id = 'next-tutorial-btn-5';
+  button.style.cssText = `
+    display: block;
+    width: 100%;
+    height: 64px;
+    margin: 32px auto 0 auto;
+    background: ${STYLE.PRIMARY_COLOR};
+    border: none;
+    border-radius: ${STYLE.BUTTON_BORDER_RADIUS};
+    cursor: pointer;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+  `;
+  button.innerHTML = '<i class="fa-solid fa-arrow-right" style="font-size:2.5em;color:white;"></i>';
+  
+  button.onclick = () => {
+    import('./tutorial.js').then(module => {
+      module.startLesson6();
+    });
+  };
+  
+  panel.appendChild(button);
 }
 
 /**

@@ -12,6 +12,7 @@ import { FillStrokePanel } from './FillStrokePanel.js';
 import { ASSETS, SVG_IDS, LESSON_FEATURES } from './constants.js';
 import { copyPasteController } from './CopyPasteController.js';
 import { undoRedoController } from './UndoRedoController.js';
+import { shapeDrawingController } from './ShapeDrawingController.js';
 
 class Lesson6State {
   constructor() {
@@ -242,14 +243,14 @@ export async function startLesson6() {
     lesson6State.fillStrokePanel = setupFillStrokePanel();
 
     // Enable copy-paste if configured for this lesson
-    if (LESSON_FEATURES[4]?.COPY_PASTE) {
+    if (LESSON_FEATURES[6]?.COPY_PASTE) {
       copyPasteController.enable();
       undoRedoController.enable();
       console.log('[Lesson6] Copy-paste and undo/redo enabled (Ctrl+C/V/Z/Y, Delete)');
     }
 
     // Enable shape tools if configured for this lesson
-    if (LESSON_FEATURES[4]?.SHAPE_TOOLS) {
+    if (LESSON_FEATURES[6]?.SHAPE_TOOLS) {
       const rectTool = document.getElementById('tool-rect');
       const ellipseTool = document.getElementById('tool-ellipse');
       if (rectTool) {
@@ -260,6 +261,8 @@ export async function startLesson6() {
         ellipseTool.disabled = false;
         ellipseTool.removeAttribute('aria-disabled');
       }
+      // Set FillStrokePanel reference so shapes use the current colors
+      shapeDrawingController.setFillStrokePanel(lesson6State.fillStrokePanel);
       console.log('[Lesson6] Shape tools enabled');
     }
 
@@ -318,4 +321,12 @@ export function cleanupLesson6() {
   lesson6State.reset();
   
   console.log('[Lesson6] Cleanup complete');
+}
+
+/**
+ * Restart Lesson 6
+ */
+export async function restartLesson6() {
+  cleanupLesson6();
+  await startLesson6();
 }

@@ -19,6 +19,11 @@ export class FillStrokePanel {
     
     // Color state
     this.currentColor = { r: 0, g: 0, b: 0 };
+    
+    // Last used colors for new shapes (default: blue fill, black stroke)
+    this.lastFillColor = { r: 0, g: 0, b: 255 };
+    this.lastStrokeColor = { r: 0, g: 0, b: 0 };
+    this.lastStrokeWidth = 1;
   }
 
   /**
@@ -218,6 +223,9 @@ export class FillStrokePanel {
       obj.setCoords();
       this.canvas.renderAll();
       
+      // Track last used stroke width
+      this.lastStrokeWidth = val;
+      
       // Fire modified event so undo/redo can track this change
       this.canvas.fire('object:modified', { target: obj });
     };
@@ -368,8 +376,12 @@ export class FillStrokePanel {
     
     if (this.isStrokeMode) {
       this.activeObject.set('stroke', color);
+      // Track last used stroke color
+      this.lastStrokeColor = { ...this.currentColor };
     } else {
       this.activeObject.set('fill', color);
+      // Track last used fill color
+      this.lastFillColor = { ...this.currentColor };
     }
     
     // Mark object as dirty to force re-render
@@ -386,6 +398,30 @@ export class FillStrokePanel {
     const showStyle = this.activeTab === 'stroke-style';
     colorPane.classList.toggle('hidden', showStyle);
     stylePane.classList.toggle('hidden', !showStyle);
+  }
+
+  /**
+   * Get the last used fill color as an RGB string
+   * @returns {string} RGB color string like 'rgb(0, 0, 255)'
+   */
+  getLastFillColor() {
+    return `rgb(${this.lastFillColor.r}, ${this.lastFillColor.g}, ${this.lastFillColor.b})`;
+  }
+
+  /**
+   * Get the last used stroke color as an RGB string
+   * @returns {string} RGB color string like 'rgb(0, 0, 0)'
+   */
+  getLastStrokeColor() {
+    return `rgb(${this.lastStrokeColor.r}, ${this.lastStrokeColor.g}, ${this.lastStrokeColor.b})`;
+  }
+
+  /**
+   * Get the last used stroke width
+   * @returns {number} Stroke width in pixels
+   */
+  getLastStrokeWidth() {
+    return this.lastStrokeWidth;
   }
 
   updateStrokeStyleUI(obj) {

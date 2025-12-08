@@ -22,6 +22,17 @@ class ShapeDrawingController {
     
     // Dimension controls
     this.dimensionControls = null;
+    
+    // Reference to FillStrokePanel for getting colors
+    this.fillStrokePanel = null;
+  }
+
+  /**
+   * Set the FillStrokePanel reference for color picking
+   * @param {FillStrokePanel} panel - The FillStrokePanel instance
+   */
+  setFillStrokePanel(panel) {
+    this.fillStrokePanel = panel;
   }
 
   /**
@@ -178,6 +189,11 @@ class ShapeDrawingController {
     this.startY = pointer.y;
     this.isDrawing = true;
 
+    // Get colors from FillStrokePanel if available, otherwise use defaults
+    const fillColor = this.fillStrokePanel ? this.fillStrokePanel.getLastFillColor() : '#0000ff';
+    const strokeColor = this.fillStrokePanel ? this.fillStrokePanel.getLastStrokeColor() : '#000000';
+    const strokeWidth = this.fillStrokePanel ? this.fillStrokePanel.getLastStrokeWidth() : 1;
+
     // Create initial shape
     if (this.activeShapeType === 'rect') {
       this.currentShape = new fabric.Rect({
@@ -185,9 +201,9 @@ class ShapeDrawingController {
         top: this.startY,
         width: 0,
         height: 0,
-        fill: '#0000ff',
-        stroke: '#000000',
-        strokeWidth: 1,
+        fill: fillColor,
+        stroke: strokeColor,
+        strokeWidth: strokeWidth,
         selectable: false,
         evented: false
       });
@@ -197,9 +213,9 @@ class ShapeDrawingController {
         top: this.startY,
         rx: 0,
         ry: 0,
-        fill: '#0000ff',
-        stroke: '#000000',
-        strokeWidth: 1,
+        fill: fillColor,
+        stroke: strokeColor,
+        strokeWidth: strokeWidth,
         originX: 'center',
         originY: 'center',
         selectable: false,

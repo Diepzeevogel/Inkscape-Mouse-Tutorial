@@ -5,6 +5,7 @@ import { startLesson2 as startLesson2Refactored, restartLesson2, cleanupLesson2 
 import { startLesson3 as startLesson3Refactored, restartLesson3, cleanupLesson3 } from './Lesson3.js';
 import { startLesson4 as startLesson4Refactored, restartLesson4, cleanupLesson4 } from './Lesson4.js';
 import { startLesson5 as startLesson5Refactored, restartLesson5, cleanupLesson5 } from './Lesson5.js';
+import { startLesson6 as startLesson6Refactored, restartLesson6, cleanupLesson6 } from './Lesson6.js';
 
 let tutorialStarted = false;
 let tutorialInitializing = false;
@@ -38,6 +39,11 @@ function cleanupAllLessons() {
     cleanupLesson5();
   } catch (e) {
     console.warn('[Tutorial] Error cleaning up Lesson 5:', e);
+  }
+  try {
+    cleanupLesson6();
+  } catch (e) {
+    console.warn('[Tutorial] Error cleaning up Lesson 6:', e);
   }
 }
 
@@ -605,6 +611,12 @@ export async function startLesson5() {
   // Use refactored version
   cleanupAllLessons();
   return startLesson5Refactored();
+}
+
+export async function startLesson6() {
+  // Use refactored version
+  cleanupAllLessons();
+  return startLesson6Refactored();
 }
 
 // Keep original implementation as fallback
