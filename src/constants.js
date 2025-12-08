@@ -165,26 +165,32 @@ export const TRANSFORM_MODE = {
 export const LESSON_FEATURES = {
   1: {
     COPY_PASTE: false,
-    SHAPE_TOOLS: false
+    SHAPE_TOOLS: false,
+    NODE_EDITING: false
   },
   2: {
     COPY_PASTE: false,
-    SHAPE_TOOLS: false
+    SHAPE_TOOLS: false,
+    NODE_EDITING: false
   },
   3: {
     COPY_PASTE: false,
-    SHAPE_TOOLS: false
+    SHAPE_TOOLS: false,
+    NODE_EDITING: false
   },
   4: {
     COPY_PASTE: false,
-    SHAPE_TOOLS: false
+    SHAPE_TOOLS: false,
+    NODE_EDITING: false
   },
   5: {
     COPY_PASTE: false,
-    SHAPE_TOOLS: false
+    SHAPE_TOOLS: false,
+    NODE_EDITING: false
   },
   6: {
     COPY_PASTE: true,
-    SHAPE_TOOLS: true
+    SHAPE_TOOLS: true,
+    NODE_EDITING: true
   }
 };

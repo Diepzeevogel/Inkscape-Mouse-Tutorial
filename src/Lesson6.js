@@ -221,6 +221,15 @@ export async function startLesson6() {
   try {
     console.log('[Lesson6] Starting...');
     lesson6State.isActive = true;
+    
+    // Update URL hash
+    try {
+      history.replaceState(null, '', '#lesson=6');
+      // Trigger hashchange event to update lesson buttons
+      window.dispatchEvent(new HashChangeEvent('hashchange'));
+    } catch (e) {
+      console.warn('[Lesson6] Could not update URL:', e);
+    }
 
     // Update UI
     updatePageMetadata();

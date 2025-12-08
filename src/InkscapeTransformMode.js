@@ -10,7 +10,7 @@
  *   enableInkscapeTransformMode(canvas);
  */
 
-import { TRANSFORM_MODE as CONFIG } from './constants.js';
+import { TRANSFORM_MODE as CONFIG, LESSON_FEATURES } from './constants.js';
 
 // Transform modes
 const MODE = {
@@ -33,7 +33,64 @@ let previousSelectionCount = 0;
 // Double-click tracking for node edit
 let lastClickTime = 0;
 let lastClickTarget = null;
+
+// Selected nodes tracking (Set of anchor indices)
+const selectedNodes = new Set();
+
+/**
+ * Get the currently selected node indices
+ * @returns {Set<number>} Set of selected anchor indices
+ */
+export function getSelectedNodes() {
+  return new Set(selectedNodes);
+}
+
+/**
+ * Select a node by index
+ * @param {number} anchorIndex - Index of the anchor to select
+ * @param {boolean} addToSelection - If true, add to selection; if false, replace selection
+ */
+export function selectNode(anchorIndex, addToSelection = false) {
+  if (!addToSelection) {
+    selectedNodes.clear();
+  }
+  selectedNodes.add(anchorIndex);
+}
+
+/**
+ * Deselect a node by index
+ * @param {number} anchorIndex - Index of the anchor to deselect
+ */
+export function deselectNode(anchorIndex) {
+  selectedNodes.delete(anchorIndex);
+}
+
+/**
+ * Clear all node selections
+ */
+export function clearNodeSelection() {
+  selectedNodes.clear();
+}
+
+/**
+ * Check if a node is selected
+ * @param {number} anchorIndex - Index of the anchor to check
+ * @returns {boolean} True if the node is selected
+ */
+export function isNodeSelected(anchorIndex) {
+  return selectedNodes.has(anchorIndex);
+}
 const DOUBLE_CLICK_THRESHOLD = 300; // ms - faster than scale/rotate toggle
+
+/**
+ * Check if node editing feature is enabled for the current lesson
+ * @returns {boolean} True if NODE_EDITING is enabled for the current lesson
+ */
+function isNodeEditingEnabled() {
+  const match = (location.hash || '').match(/lesson=(\d+)/);
+  const lesson = match ? parseInt(match[1], 10) : null;
+  return lesson && LESSON_FEATURES[lesson]?.NODE_EDITING === true;
+}
 
 // Icon cache for custom handles
 const iconCache = {
@@ -500,6 +557,15 @@ function handleMultiObjectSelection(activeObject, selected, deselected, wasActiv
  */
 function handleMouseDown(e, canvas) {
   const activeObject = canvas.getActiveObject();
+  
+  // If clicking on empty canvas while in node edit mode, exit it
+  if (!e.target && activeObject && getMode(activeObject) === MODE.NODE_EDIT) {
+    exitNodeEditMode(activeObject, canvas);
+    canvas.discardActiveObject();
+    canvas.requestRenderAll();
+    return;
+  }
+  
   if (!activeObject) return;
   
   // Don't track if clicking on a control handle
@@ -579,6 +645,9 @@ function handleSelectionCleared(e, canvas) {
  * @param {fabric.Canvas} canvas - The canvas instance
  */
 function handleMouseDblClick(e, canvas) {
+  // Only allow node editing if the feature is enabled for the current lesson
+  if (!isNodeEditingEnabled()) return;
+  
   const target = e.target;
   if (!target) return;
   
@@ -632,7 +701,8 @@ function convertPolygonToPath(polygon, canvas) {
     pathData.push(['L', points[i].x, points[i].y]);
   }
   
-  // Close path for polygons
+  // Close path for polygons - Z implicitly draws back to start
+  // The closing segment can be converted to a curve using makeClosingSegmentCurve()
   if (isClosed) {
     pathData.push(['Z']);
   }
@@ -670,8 +740,11 @@ function convertPolygonToPath(polygon, canvas) {
  * @param {fabric.Object} obj - The polygon/polyline to edit
  * @param {fabric.Canvas} canvas - The canvas instance
  */
-function enterNodeEditMode(obj, canvas) {
+export function enterNodeEditMode(obj, canvas) {
   if (!obj) return;
+  
+  // Clear any previous node selection
+  selectedNodes.clear();
   
   // Handle both polygons/polylines (with points) and paths
   let targetObj = obj;
@@ -732,6 +805,19 @@ function enterNodeEditMode(obj, canvas) {
     mtr: false
   });
   
+  // Add segment click handler for selecting segments
+  const segmentClickHandler = (e) => {
+    // Only handle if clicking on this path
+    if (e.target !== targetObj) return;
+    // Let control handlers take precedence
+    if (e.transform && e.transform.corner) return;
+    
+    handleNodeEditMouseDown(e, targetObj, canvas);
+  };
+  
+  canvas.on('mouse:down', segmentClickHandler);
+  targetObj._segmentClickHandler = segmentClickHandler;
+  
   targetObj.hasBorders = false;
   targetObj.dirty = true;
   canvas.requestRenderAll();
@@ -746,6 +832,12 @@ function enterNodeEditMode(obj, canvas) {
  */
 function exitNodeEditMode(obj, canvas) {
   if (!obj) return;
+  
+  // Remove segment click handler
+  if (obj._segmentClickHandler) {
+    canvas.off('mouse:down', obj._segmentClickHandler);
+    delete obj._segmentClickHandler;
+  }
   
   // Restore object caching
   if (obj._nodeEditOriginalCaching !== undefined) {
@@ -804,6 +896,9 @@ function drawBezierHandleLines(ctx, path) {
   const pathData = path.path;
   
   ctx.save();
+  // Reset context transform to identity - we'll apply transforms manually
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  
   ctx.strokeStyle = '#1976d2';
   ctx.lineWidth = 1;
   ctx.setLineDash([4, 4]);
@@ -813,6 +908,12 @@ function drawBezierHandleLines(ctx, path) {
   // This ensures we use the same calculation as the control rendering
   const controlKeys = Object.keys(path.controls);
   
+  // Calculate the transform matrix once for efficiency
+  const matrix = fabric.util.multiplyTransformMatrices(
+    path.canvas.viewportTransform,
+    path.calcTransformMatrix()
+  );
+  
   for (const key of controlKeys) {
     const control = path.controls[key];
     
@@ -821,7 +922,7 @@ function drawBezierHandleLines(ctx, path) {
       const anchorIndex = parseInt(key.replace('cp1_', ''));
       const anchorKey = 'p' + anchorIndex;
       
-      // Get cp1 position
+      // Get cp1 position from positionHandler (returns screen coords)
       const cp1Pos = control.positionHandler(
         { x: path.width, y: path.height },
         null,
@@ -852,11 +953,6 @@ function drawBezierHandleLines(ctx, path) {
         }
         
         if (prevX !== undefined) {
-          // Transform using same method as position handlers
-          const matrix = fabric.util.multiplyTransformMatrices(
-            path.canvas.viewportTransform,
-            path.calcTransformMatrix()
-          );
           const prevScreen = fabric.util.transformPoint({ x: prevX, y: prevY }, matrix);
           
           ctx.beginPath();
@@ -870,7 +966,7 @@ function drawBezierHandleLines(ctx, path) {
     // Check if this is a cp2 control (connects to current anchor/endpoint)
     if (key.startsWith('cp2_')) {
       const anchorIndex = parseInt(key.replace('cp2_', ''));
-      const anchorKey = 'p' + anchorIndex;
+      let anchorKey = 'p' + anchorIndex;
       
       // Get cp2 position
       const cp2Pos = control.positionHandler(
@@ -878,6 +974,11 @@ function drawBezierHandleLines(ctx, path) {
         null,
         path
       );
+      
+      // For closing curves, the anchor control doesn't exist - use p0 instead
+      if (!path.controls[anchorKey] && control.isClosingCurve) {
+        anchorKey = 'p0';
+      }
       
       // Get the anchor (endpoint) position - cp2 connects to END of curve
       if (path.controls[anchorKey]) {
@@ -900,16 +1001,232 @@ function drawBezierHandleLines(ctx, path) {
 }
 
 /**
+ * Calculate squared distance from a point to a line segment
+ * @param {number} px - Point X
+ * @param {number} py - Point Y
+ * @param {number} x1 - Segment start X
+ * @param {number} y1 - Segment start Y
+ * @param {number} x2 - Segment end X
+ * @param {number} y2 - Segment end Y
+ * @returns {number} Squared distance
+ */
+function pointToLineSegmentDistanceSq(px, py, x1, y1, x2, y2) {
+  const dx = x2 - x1;
+  const dy = y2 - y1;
+  const lengthSq = dx * dx + dy * dy;
+  
+  if (lengthSq === 0) {
+    // Segment is a point
+    return (px - x1) ** 2 + (py - y1) ** 2;
+  }
+  
+  // Project point onto line, clamp to segment
+  let t = ((px - x1) * dx + (py - y1) * dy) / lengthSq;
+  t = Math.max(0, Math.min(1, t));
+  
+  const projX = x1 + t * dx;
+  const projY = y1 + t * dy;
+  
+  return (px - projX) ** 2 + (py - projY) ** 2;
+}
+
+/**
+ * Calculate approximate distance from a point to a cubic bezier curve
+ * Uses sampling approach for efficiency
+ * @param {number} px - Point X
+ * @param {number} py - Point Y
+ * @param {number} x0 - Start point X
+ * @param {number} y0 - Start point Y
+ * @param {number} cp1x - Control point 1 X
+ * @param {number} cp1y - Control point 1 Y
+ * @param {number} cp2x - Control point 2 X
+ * @param {number} cp2y - Control point 2 Y
+ * @param {number} x3 - End point X
+ * @param {number} y3 - End point Y
+ * @returns {number} Squared distance (approximate)
+ */
+function pointToBezierDistanceSq(px, py, x0, y0, cp1x, cp1y, cp2x, cp2y, x3, y3) {
+  // Sample the curve at multiple points and find minimum distance
+  const samples = 20;
+  let minDistSq = Infinity;
+  
+  for (let i = 0; i <= samples; i++) {
+    const t = i / samples;
+    const t2 = t * t;
+    const t3 = t2 * t;
+    const mt = 1 - t;
+    const mt2 = mt * mt;
+    const mt3 = mt2 * mt;
+    
+    // Cubic bezier formula
+    const bx = mt3 * x0 + 3 * mt2 * t * cp1x + 3 * mt * t2 * cp2x + t3 * x3;
+    const by = mt3 * y0 + 3 * mt2 * t * cp1y + 3 * mt * t2 * cp2y + t3 * y3;
+    
+    const distSq = (px - bx) ** 2 + (py - by) ** 2;
+    if (distSq < minDistSq) {
+      minDistSq = distSq;
+    }
+  }
+  
+  return minDistSq;
+}
+
+/**
+ * Find the closest segment to a click point in local path coordinates
+ * @param {fabric.Path} path - The path object
+ * @param {number} localX - Click X in local path coordinates (relative to pathOffset)
+ * @param {number} localY - Click Y in local path coordinates (relative to pathOffset)
+ * @param {number} threshold - Maximum distance (in path coords) to consider a "hit"
+ * @returns {Object|null} {segmentIndex, anchorStart, anchorEnd} or null if no segment close enough
+ */
+function findClosestSegment(path, localX, localY, threshold = 10) {
+  if (!path || !path.path) return null;
+  
+  const pathData = path.path;
+  const anchors = getPathAnchors(pathData);
+  
+  if (anchors.length < 2) return null;
+  
+  const thresholdSq = threshold * threshold;
+  let closestSegment = null;
+  let minDistSq = thresholdSq;
+  
+  // Check each segment
+  for (let i = 0; i < anchors.length; i++) {
+    const startAnchor = anchors[i];
+    let endAnchor, segmentCmd;
+    
+    // Find the next anchor (could be next in array or wrap to start for closing)
+    if (i < anchors.length - 1) {
+      endAnchor = anchors[i + 1];
+      segmentCmd = pathData[endAnchor.commandIndex];
+    } else {
+      // Check for Z closing segment
+      const lastCmd = pathData[pathData.length - 1];
+      if (lastCmd[0] === 'Z') {
+        // Closing segment from last anchor to first anchor
+        endAnchor = anchors[0];
+        // Check if there's a closing curve
+        const prevCmd = pathData[pathData.length - 2];
+        if (prevCmd && prevCmd[0] === 'C' && 
+            Math.abs(prevCmd[5] - endAnchor.x) < 0.001 && 
+            Math.abs(prevCmd[6] - endAnchor.y) < 0.001) {
+          // It's a closing curve
+          segmentCmd = prevCmd;
+        } else {
+          // It's a closing line (implicit L from Z)
+          segmentCmd = ['L', endAnchor.x, endAnchor.y];
+        }
+      } else {
+        continue; // No closing segment
+      }
+    }
+    
+    let distSq;
+    if (segmentCmd[0] === 'L') {
+      distSq = pointToLineSegmentDistanceSq(
+        localX, localY,
+        startAnchor.x, startAnchor.y,
+        segmentCmd[1], segmentCmd[2]
+      );
+    } else if (segmentCmd[0] === 'C') {
+      distSq = pointToBezierDistanceSq(
+        localX, localY,
+        startAnchor.x, startAnchor.y,
+        segmentCmd[1], segmentCmd[2], // cp1
+        segmentCmd[3], segmentCmd[4], // cp2
+        segmentCmd[5], segmentCmd[6]  // end
+      );
+    } else {
+      continue; // Skip other command types
+    }
+    
+    if (distSq < minDistSq) {
+      minDistSq = distSq;
+      closestSegment = {
+        segmentIndex: i,
+        anchorStartIndex: i,
+        anchorEndIndex: (i + 1) % anchors.length
+      };
+    }
+  }
+  
+  return closestSegment;
+}
+
+/**
+ * Handle mouse down in node edit mode - check for segment clicks
+ * @param {Object} e - Fabric.js mouse event
+ * @param {fabric.Path} path - The path object being edited
+ * @param {fabric.Canvas} canvas - The canvas instance
+ * @returns {boolean} True if a segment was clicked
+ */
+function handleNodeEditMouseDown(e, path, canvas) {
+  // Only handle if clicking on the path itself, not on a control
+  if (e.transform && e.transform.corner) return false;
+  
+  // Check if click is on a node control - if so, let the control handle it
+  const pointer = canvas.getPointer(e.e);
+  
+  // Convert pointer to path local coordinates
+  const localPoint = path.toLocalPoint(
+    new fabric.Point(pointer.x, pointer.y),
+    'center',
+    'center'
+  );
+  const localX = localPoint.x + path.pathOffset.x;
+  const localY = localPoint.y + path.pathOffset.y;
+  
+  // Determine threshold based on zoom level
+  const zoom = canvas.getZoom();
+  const threshold = 12 / zoom; // Larger threshold at lower zoom
+  
+  // Find closest segment
+  const segment = findClosestSegment(path, localX, localY, threshold);
+  
+  if (segment) {
+    const shiftKey = e.e && e.e.shiftKey;
+    
+    if (!shiftKey) {
+      // Clear existing selection
+      selectedNodes.clear();
+    }
+    
+    // Select both endpoints of the segment
+    selectedNodes.add(segment.anchorStartIndex);
+    selectedNodes.add(segment.anchorEndIndex);
+    
+    debugLog(`[InkscapeTransformMode] Selected segment ${segment.segmentIndex} (nodes ${segment.anchorStartIndex}, ${segment.anchorEndIndex})`);
+    
+    path.dirty = true;
+    canvas.requestRenderAll();
+    return true;
+  }
+  
+  return false;
+}
+
+/**
  * Get anchor points from a path (M, L, C, Q endpoints - not control points)
  * @param {Array} pathData - The path data array
- * @returns {Array} Array of {commandIndex, x, y, command} for each anchor
+ * @returns {Array} Array of {commandIndex, x, y, command, isClosingCurve} for each anchor
  */
 function getPathAnchors(pathData) {
   const anchors = [];
   
+  // Get first point for detecting closing curves
+  let firstX = null, firstY = null;
+  if (pathData.length > 0 && pathData[0][0] === 'M') {
+    firstX = pathData[0][1];
+    firstY = pathData[0][2];
+  }
+  
   for (let i = 0; i < pathData.length; i++) {
     const cmd = pathData[i];
     const command = cmd[0];
+    
+    // Check if next command is Z (closing)
+    const isFollowedByZ = (i + 1 < pathData.length && pathData[i + 1][0] === 'Z');
     
     switch (command) {
       case 'M': // Move to
@@ -922,6 +1239,12 @@ function getPathAnchors(pathData) {
         });
         break;
       case 'C': // Cubic bezier - endpoint is last two values
+        // Check if this is a closing curve (ends at first point and followed by Z)
+        const isClosingCurve = isFollowedByZ && 
+          firstX !== null && 
+          Math.abs(cmd[5] - firstX) < 0.001 && 
+          Math.abs(cmd[6] - firstY) < 0.001;
+        
         anchors.push({
           commandIndex: i,
           x: cmd[5],  // End point x
@@ -929,7 +1252,8 @@ function getPathAnchors(pathData) {
           command: command,
           // Also store control points for later
           cp1x: cmd[1], cp1y: cmd[2],
-          cp2x: cmd[3], cp2y: cmd[4]
+          cp2x: cmd[3], cp2y: cmd[4],
+          isClosingCurve: isClosingCurve
         });
         break;
       case 'Q': // Quadratic bezier - endpoint is last two values
@@ -972,17 +1296,23 @@ function createPathNodeControls(path) {
   // Create control for each anchor point
   for (let i = 0; i < anchors.length; i++) {
     const anchor = anchors[i];
-    controls['p' + i] = new fabric.Control({
-      positionHandler: createPathNodePositionHandler(anchor.commandIndex, anchor.command),
-      actionHandler: createPathNodeActionHandler(anchor.commandIndex, anchor.command),
-      render: renderNodeControl,
-      cursorStyle: 'pointer',
-      anchorIndex: i,
-      commandIndex: anchor.commandIndex,
-      actionName: 'modifyPath',
-      offsetX: 0,
-      offsetY: 0
-    });
+    
+    // Skip creating anchor control for closing curves (the endpoint is same as p0)
+    // But we still need to create the bezier handle controls below
+    if (!anchor.isClosingCurve) {
+      controls['p' + i] = new fabric.Control({
+        positionHandler: createPathNodePositionHandler(anchor.commandIndex, anchor.command),
+        actionHandler: createPathNodeActionHandler(anchor.commandIndex, anchor.command),
+        mouseDownHandler: createNodeMouseDownHandler(i),
+        render: renderNodeControl,
+        cursorStyle: 'pointer',
+        anchorIndex: i,
+        commandIndex: anchor.commandIndex,
+        actionName: 'modifyPath',
+        offsetX: 0,
+        offsetY: 0
+      });
+    }
     
     // For cubic bezier commands, also create controls for control points
     if (anchor.command === 'C') {
@@ -996,6 +1326,7 @@ function createPathNodeControls(path) {
         commandIndex: anchor.commandIndex,
         handleType: 'cp1',
         actionName: 'modifyBezierHandle',
+        isClosingCurve: anchor.isClosingCurve,
         offsetX: 0,
         offsetY: 0
       });
@@ -1010,6 +1341,7 @@ function createPathNodeControls(path) {
         commandIndex: anchor.commandIndex,
         handleType: 'cp2',
         actionName: 'modifyBezierHandle',
+        isClosingCurve: anchor.isClosingCurve,
         offsetX: 0,
         offsetY: 0
       });
@@ -1057,7 +1389,143 @@ function createBezierHandlePositionHandler(commandIndex, handleType) {
 }
 
 /**
+ * Find the anchor index for a given handle
+ * - cp1 belongs to the PREVIOUS anchor (it's the outgoing handle from there)
+ * - cp2 belongs to the CURRENT command's endpoint
+ * @param {Array} pathData - The path data array
+ * @param {number} commandIndex - Index of the C command
+ * @param {string} handleType - 'cp1' or 'cp2'
+ * @returns {number} The anchor index, or -1 if not found
+ */
+function getAnchorIndexForHandle(pathData, commandIndex, handleType) {
+  const anchors = getPathAnchors(pathData);
+  
+  if (handleType === 'cp2') {
+    // cp2 belongs to the endpoint of this command - find it
+    // Special case: if this is a closing curve, cp2 belongs to anchor 0
+    const cmd = pathData[commandIndex];
+    if (cmd && cmd[0] === 'C') {
+      // Check if this is a closing curve (ends at first point)
+      const firstX = pathData[0][1];
+      const firstY = pathData[0][2];
+      if (Math.abs(cmd[5] - firstX) < 0.001 && Math.abs(cmd[6] - firstY) < 0.001) {
+        // Check if followed by Z
+        const nextCmd = pathData[commandIndex + 1];
+        if (nextCmd && nextCmd[0] === 'Z') {
+          return 0; // cp2 of closing curve belongs to anchor 0
+        }
+      }
+    }
+    
+    for (let i = 0; i < anchors.length; i++) {
+      if (anchors[i].commandIndex === commandIndex) {
+        return i;
+      }
+    }
+  } else { // cp1
+    // cp1 belongs to the previous anchor - find the anchor just before this command
+    for (let i = 0; i < anchors.length; i++) {
+      if (anchors[i].commandIndex === commandIndex) {
+        return Math.max(0, i - 1);
+      }
+    }
+  }
+  return -1;
+}
+
+/**
+ * Get the opposite handle info for a given handle
+ * For smooth/auto-smooth nodes, when one handle moves, the opposite should follow
+ * @param {Array} pathData - The path data array
+ * @param {number} commandIndex - Index of the C command being dragged
+ * @param {string} handleType - 'cp1' or 'cp2'
+ * @param {number} anchorX - The anchor point X coordinate
+ * @param {number} anchorY - The anchor point Y coordinate
+ * @returns {Object|null} {commandIndex, handleType, handleX, handleY} or null
+ */
+function getOppositeHandle(pathData, commandIndex, handleType, anchorX, anchorY) {
+  // Get first point coordinates for detecting closing curves
+  const firstX = pathData[0] && pathData[0][0] === 'M' ? pathData[0][1] : null;
+  const firstY = pathData[0] && pathData[0][0] === 'M' ? pathData[0][2] : null;
+  
+  if (handleType === 'cp2') {
+    // Check if this is a closing curve's cp2 (belongs to anchor 0)
+    const cmd = pathData[commandIndex];
+    if (cmd && cmd[0] === 'C' && firstX !== null) {
+      if (Math.abs(cmd[5] - firstX) < 0.001 && Math.abs(cmd[6] - firstY) < 0.001) {
+        const nextCmd = pathData[commandIndex + 1];
+        if (nextCmd && nextCmd[0] === 'Z') {
+          // This is a closing curve - opposite is cp1 of the first curve after M
+          for (let i = 1; i < pathData.length; i++) {
+            if (pathData[i][0] === 'C') {
+              return {
+                commandIndex: i,
+                handleType: 'cp1',
+                handleX: pathData[i][1],
+                handleY: pathData[i][2]
+              };
+            }
+          }
+        }
+      }
+    }
+    
+    // Regular case: Opposite is cp1 of the NEXT C command (if any)
+    for (let i = commandIndex + 1; i < pathData.length; i++) {
+      if (pathData[i][0] === 'C') {
+        return {
+          commandIndex: i,
+          handleType: 'cp1',
+          handleX: pathData[i][1],
+          handleY: pathData[i][2]
+        };
+      }
+      if (pathData[i][0] === 'Z') break; // No more commands after close
+    }
+  } else { // cp1
+    // Check if this cp1 is for anchor 0 (first curve after M)
+    // If so, opposite is cp2 of the closing curve
+    if (commandIndex === 1 || (pathData[commandIndex - 1] && pathData[commandIndex - 1][0] === 'M')) {
+      // This cp1 is the outgoing handle from anchor 0
+      // Look for a closing curve
+      for (let i = pathData.length - 1; i >= 0; i--) {
+        if (pathData[i][0] === 'C' && firstX !== null) {
+          if (Math.abs(pathData[i][5] - firstX) < 0.001 && Math.abs(pathData[i][6] - firstY) < 0.001) {
+            const nextCmd = pathData[i + 1];
+            if (nextCmd && nextCmd[0] === 'Z') {
+              // Found the closing curve
+              return {
+                commandIndex: i,
+                handleType: 'cp2',
+                handleX: pathData[i][3],
+                handleY: pathData[i][4]
+              };
+            }
+          }
+        }
+        if (pathData[i][0] === 'M') break;
+      }
+    }
+    
+    // Regular case: Opposite is cp2 of the PREVIOUS C command (if any)
+    for (let i = commandIndex - 1; i >= 0; i--) {
+      if (pathData[i][0] === 'C') {
+        return {
+          commandIndex: i,
+          handleType: 'cp2',
+          handleX: pathData[i][3],
+          handleY: pathData[i][4]
+        };
+      }
+      if (pathData[i][0] === 'M') break; // Reached the start
+    }
+  }
+  return null;
+}
+
+/**
  * Create action handler for dragging a bezier control handle
+ * Enforces smooth/auto-smooth constraints when applicable
  * @param {number} commandIndex - Index of the command in the path array
  * @param {string} handleType - 'cp1' or 'cp2'
  * @returns {Function} Action handler function
@@ -1065,6 +1533,7 @@ function createBezierHandlePositionHandler(commandIndex, handleType) {
 function createBezierHandleActionHandler(commandIndex, handleType) {
   return function(eventData, transform, x, y) {
     const path = transform.target;
+    const pathData = path.path;
     const mouseLocalPosition = path.toLocalPoint(
       new fabric.Point(x, y),
       'center',
@@ -1074,9 +1543,10 @@ function createBezierHandleActionHandler(commandIndex, handleType) {
     const newX = mouseLocalPosition.x + path.pathOffset.x;
     const newY = mouseLocalPosition.y + path.pathOffset.y;
     
-    const cmd = path.path[commandIndex];
+    const cmd = pathData[commandIndex];
     if (cmd[0] !== 'C') return false;
     
+    // Update the dragged handle
     if (handleType === 'cp1') {
       cmd[1] = newX;
       cmd[2] = newY;
@@ -1085,9 +1555,98 @@ function createBezierHandleActionHandler(commandIndex, handleType) {
       cmd[4] = newY;
     }
     
+    // Check if node type constraint applies
+    const anchorIndex = getAnchorIndexForHandle(pathData, commandIndex, handleType);
+    const nodeType = path._nodeTypes && path._nodeTypes[anchorIndex];
+    
+    if (nodeType === 'smooth' || nodeType === 'auto-smooth') {
+      // Get anchor position
+      const anchors = getPathAnchors(pathData);
+      if (anchorIndex >= 0 && anchorIndex < anchors.length) {
+        const anchor = anchors[anchorIndex];
+        const anchorX = anchor.x;
+        const anchorY = anchor.y;
+        
+        // Get opposite handle info
+        const opposite = getOppositeHandle(pathData, commandIndex, handleType, anchorX, anchorY);
+        
+        if (opposite) {
+          // Calculate distance from anchor to dragged handle
+          const draggedDx = newX - anchorX;
+          const draggedDy = newY - anchorY;
+          const draggedLen = Math.sqrt(draggedDx * draggedDx + draggedDy * draggedDy);
+          
+          if (draggedLen > 0.001) {
+            // Normalize direction
+            const normDx = draggedDx / draggedLen;
+            const normDy = draggedDy / draggedLen;
+            
+            // Determine opposite handle length
+            let oppositeLen;
+            if (nodeType === 'auto-smooth') {
+              // Auto-smooth: same length as dragged handle
+              oppositeLen = draggedLen;
+            } else {
+              // Smooth: keep original length of opposite handle
+              const oppDx = opposite.handleX - anchorX;
+              const oppDy = opposite.handleY - anchorY;
+              oppositeLen = Math.sqrt(oppDx * oppDx + oppDy * oppDy);
+            }
+            
+            // Set opposite handle position (opposite direction)
+            const newOppX = anchorX - normDx * oppositeLen;
+            const newOppY = anchorY - normDy * oppositeLen;
+            
+            const oppCmd = pathData[opposite.commandIndex];
+            if (opposite.handleType === 'cp1') {
+              oppCmd[1] = newOppX;
+              oppCmd[2] = newOppY;
+            } else {
+              oppCmd[3] = newOppX;
+              oppCmd[4] = newOppY;
+            }
+          }
+        }
+      }
+    }
+    
     path.dirty = true;
     path.setCoords();
     return true;
+  };
+}
+
+/**
+ * Create mouse down handler for node selection
+ * Handles click-to-select and shift+click for multi-select
+ * @param {number} anchorIndex - Index of the anchor
+ * @returns {Function} Mouse down handler function
+ */
+function createNodeMouseDownHandler(anchorIndex) {
+  return function(eventData, transform, x, y) {
+    const shiftKey = eventData.e && eventData.e.shiftKey;
+    
+    if (shiftKey) {
+      // Toggle selection with shift
+      if (selectedNodes.has(anchorIndex)) {
+        selectedNodes.delete(anchorIndex);
+      } else {
+        selectedNodes.add(anchorIndex);
+      }
+    } else {
+      // Replace selection without shift
+      selectedNodes.clear();
+      selectedNodes.add(anchorIndex);
+    }
+    
+    // Request render to update visual selection state
+    if (transform.target && transform.target.canvas) {
+      transform.target.dirty = true;
+      transform.target.canvas.requestRenderAll();
+    }
+    
+    // Return false to allow the default action (dragging) to proceed
+    return false;
   };
 }
 
@@ -1163,6 +1722,9 @@ function createPathNodePositionHandler(commandIndex, command) {
 
 /**
  * Create action handler for dragging a path node
+ * When moving an anchor, its associated control handles move with it:
+ * - cp2 of the current C command (incoming handle)
+ * - cp1 of the next C command (outgoing handle)
  * @param {number} commandIndex - Index of the command in the path array
  * @param {string} command - The path command type (M, L, C, Q)
  * @returns {Function} Action handler function
@@ -1170,6 +1732,7 @@ function createPathNodePositionHandler(commandIndex, command) {
 function createPathNodeActionHandler(commandIndex, command) {
   return function(eventData, transform, x, y) {
     const path = transform.target;
+    const pathData = path.path;
     const mouseLocalPosition = path.toLocalPoint(
       new fabric.Point(x, y),
       'center',
@@ -1179,7 +1742,30 @@ function createPathNodeActionHandler(commandIndex, command) {
     const newX = mouseLocalPosition.x + path.pathOffset.x;
     const newY = mouseLocalPosition.y + path.pathOffset.y;
     
-    const cmd = path.path[commandIndex];
+    const cmd = pathData[commandIndex];
+    
+    // Calculate delta for moving associated control points
+    let oldX, oldY;
+    switch (command) {
+      case 'M':
+      case 'L':
+        oldX = cmd[1];
+        oldY = cmd[2];
+        break;
+      case 'C':
+        oldX = cmd[5];
+        oldY = cmd[6];
+        break;
+      case 'Q':
+        oldX = cmd[3];
+        oldY = cmd[4];
+        break;
+      default:
+        oldX = newX;
+        oldY = newY;
+    }
+    const dx = newX - oldX;
+    const dy = newY - oldY;
     
     // Update endpoint coordinates based on command type
     switch (command) {
@@ -1189,12 +1775,7 @@ function createPathNodeActionHandler(commandIndex, command) {
         cmd[2] = newY;
         break;
       case 'C':
-        // For cubic bezier, also move control points by the same delta
-        const oldX = cmd[5];
-        const oldY = cmd[6];
-        const dx = newX - oldX;
-        const dy = newY - oldY;
-        // Move second control point with the endpoint
+        // Move second control point (cp2) with the endpoint
         cmd[3] += dx;
         cmd[4] += dy;
         // Update endpoint
@@ -1202,16 +1783,38 @@ function createPathNodeActionHandler(commandIndex, command) {
         cmd[6] = newY;
         break;
       case 'Q':
-        // For quadratic bezier, also move control point
-        const oldQx = cmd[3];
-        const oldQy = cmd[4];
-        const dxQ = newX - oldQx;
-        const dyQ = newY - oldQy;
-        cmd[1] += dxQ;
-        cmd[2] += dyQ;
+        // Move control point with the endpoint
+        cmd[1] += dx;
+        cmd[2] += dy;
         cmd[3] = newX;
         cmd[4] = newY;
         break;
+    }
+    
+    // Move cp1 of the NEXT command if it's a C command (outgoing handle from this anchor)
+    const nextIndex = commandIndex + 1;
+    if (nextIndex < pathData.length && pathData[nextIndex][0] === 'C') {
+      pathData[nextIndex][1] += dx;
+      pathData[nextIndex][2] += dy;
+    }
+    
+    // If this is the first point (M command), handle closing curve connections
+    if (command === 'M' && commandIndex === 0) {
+      const lastIndex = pathData.length - 1;
+      
+      // Check if path ends with Z and has a C command before it
+      if (lastIndex >= 1 && pathData[lastIndex][0] === 'Z') {
+        const closingCurveIndex = lastIndex - 1;
+        const beforeZ = pathData[closingCurveIndex];
+        if (beforeZ[0] === 'C') {
+          // Update the closing curve's endpoint to match the new M position
+          beforeZ[5] = newX;
+          beforeZ[6] = newY;
+          // Also move cp2 of the closing curve (it should stay relative to the endpoint)
+          beforeZ[3] += dx;
+          beforeZ[4] += dy;
+        }
+      }
     }
     
     path.dirty = true;
@@ -1290,39 +1893,118 @@ function recalculatePathBoundingBox(path) {
 }
 
 /**
+ * Calculate the bounding box of a cubic bezier curve
+ * Uses calculus to find the actual extremes of the curve
+ * @param {number} p0 - Start point coordinate
+ * @param {number} p1 - First control point coordinate  
+ * @param {number} p2 - Second control point coordinate
+ * @param {number} p3 - End point coordinate
+ * @returns {Object} {min, max} for this dimension
+ */
+function getBezierBounds1D(p0, p1, p2, p3) {
+  let min = Math.min(p0, p3);
+  let max = Math.max(p0, p3);
+  
+  // Coefficients of the derivative: 3at² + 2bt + c = 0
+  const a = -p0 + 3*p1 - 3*p2 + p3;
+  const b = 2*p0 - 4*p1 + 2*p2;
+  const c = -p0 + p1;
+  
+  // Solve quadratic equation for t
+  if (Math.abs(a) > 0.0001) {
+    const discriminant = b*b - 4*a*c;
+    if (discriminant >= 0) {
+      const sqrtD = Math.sqrt(discriminant);
+      const t1 = (-b + sqrtD) / (2*a);
+      const t2 = (-b - sqrtD) / (2*a);
+      
+      // Check if t values are in valid range [0, 1]
+      for (const t of [t1, t2]) {
+        if (t > 0 && t < 1) {
+          // Evaluate bezier at t
+          const mt = 1 - t;
+          const val = mt*mt*mt*p0 + 3*mt*mt*t*p1 + 3*mt*t*t*p2 + t*t*t*p3;
+          min = Math.min(min, val);
+          max = Math.max(max, val);
+        }
+      }
+    }
+  } else if (Math.abs(b) > 0.0001) {
+    // Linear case: bt + c = 0
+    const t = -c / b;
+    if (t > 0 && t < 1) {
+      const mt = 1 - t;
+      const val = mt*mt*mt*p0 + 3*mt*mt*t*p1 + 3*mt*t*t*p2 + t*t*t*p3;
+      min = Math.min(min, val);
+      max = Math.max(max, val);
+    }
+  }
+  
+  return { min, max };
+}
+
+/**
  * Recalculate bounding box for a Path when exiting node edit mode
- * This version doesn't cause position jumps because it uses the path's
- * current visual position as reference
+ * This version captures the actual screen position of the first point,
+ * recalculates bounds, then adjusts to maintain the same screen position
  * @param {fabric.Path} path - The path to update
  */
 function recalculatePathBoundingBoxFinal(path) {
-  if (!path || !path.path || path.path.length === 0) return;
+  if (!path || !path.path || path.path.length === 0 || !path.canvas) return;
   
-  // Get all points from path commands to find actual bounds
+  // STEP 1: Capture the current screen position of the first point (M command)
+  const firstCmd = path.path[0];
+  if (firstCmd[0] !== 'M') return;
+  
+  const firstPointLocal = {
+    x: firstCmd[1] - path.pathOffset.x,
+    y: firstCmd[2] - path.pathOffset.y
+  };
+  
+  // Transform to screen coordinates
+  const transformMatrix = path.calcTransformMatrix();
+  const firstPointScreen = fabric.util.transformPoint(firstPointLocal, transformMatrix);
+  
+  // STEP 2: Calculate new bounding box (actual curve bounds, not control points)
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  let prevX = 0, prevY = 0;
   
   for (const cmd of path.path) {
     const command = cmd[0];
     switch (command) {
       case 'M':
+        prevX = cmd[1];
+        prevY = cmd[2];
+        minX = Math.min(minX, cmd[1]);
+        minY = Math.min(minY, cmd[2]);
+        maxX = Math.max(maxX, cmd[1]);
+        maxY = Math.max(maxY, cmd[2]);
+        break;
       case 'L':
+        prevX = cmd[1];
+        prevY = cmd[2];
         minX = Math.min(minX, cmd[1]);
         minY = Math.min(minY, cmd[2]);
         maxX = Math.max(maxX, cmd[1]);
         maxY = Math.max(maxY, cmd[2]);
         break;
       case 'C':
-        // Include control points and endpoint in bounding box
-        minX = Math.min(minX, cmd[1], cmd[3], cmd[5]);
-        minY = Math.min(minY, cmd[2], cmd[4], cmd[6]);
-        maxX = Math.max(maxX, cmd[1], cmd[3], cmd[5]);
-        maxY = Math.max(maxY, cmd[2], cmd[4], cmd[6]);
+        const boundsX = getBezierBounds1D(prevX, cmd[1], cmd[3], cmd[5]);
+        const boundsY = getBezierBounds1D(prevY, cmd[2], cmd[4], cmd[6]);
+        minX = Math.min(minX, boundsX.min);
+        maxX = Math.max(maxX, boundsX.max);
+        minY = Math.min(minY, boundsY.min);
+        maxY = Math.max(maxY, boundsY.max);
+        prevX = cmd[5];
+        prevY = cmd[6];
         break;
       case 'Q':
-        minX = Math.min(minX, cmd[1], cmd[3]);
-        minY = Math.min(minY, cmd[2], cmd[4]);
-        maxX = Math.max(maxX, cmd[1], cmd[3]);
-        maxY = Math.max(maxY, cmd[2], cmd[4]);
+        minX = Math.min(minX, cmd[3]);
+        minY = Math.min(minY, cmd[4]);
+        maxX = Math.max(maxX, cmd[3]);
+        maxY = Math.max(maxY, cmd[4]);
+        prevX = cmd[3];
+        prevY = cmd[4];
         break;
     }
   }
@@ -1330,30 +2012,40 @@ function recalculatePathBoundingBoxFinal(path) {
   const width = maxX - minX;
   const height = maxY - minY;
   
-  // New pathOffset is the center of the actual path bounds
+  // STEP 3: Set new pathOffset and dimensions
   const newPathOffset = {
     x: minX + width / 2,
     y: minY + height / 2
   };
   
-  // The path is rendered at: left + (pointX - pathOffset.x)
-  // We want the visual position to stay the same
-  // Currently with old pathOffset, a point at minX renders at: left + (minX - oldPathOffset.x)
-  // With new pathOffset, to render at same position: newLeft + (minX - newPathOffset.x) = left + (minX - oldPathOffset.x)
-  // newLeft = left + (minX - oldPathOffset.x) - (minX - newPathOffset.x)
-  // newLeft = left + newPathOffset.x - oldPathOffset.x
-  
-  const oldPathOffset = path.pathOffset;
-  const newLeft = path.left + (newPathOffset.x - oldPathOffset.x);
-  const newTop = path.top + (newPathOffset.y - oldPathOffset.y);
-  
-  // Update pathOffset and dimensions
   path.pathOffset = newPathOffset;
+  path.width = width;
+  path.height = height;
+  
+  // STEP 4: Calculate where the first point would now appear with current left/top
+  const newFirstPointLocal = {
+    x: firstCmd[1] - newPathOffset.x,
+    y: firstCmd[2] - newPathOffset.y
+  };
+  
+  // We need to find left/top such that newFirstPointLocal transforms to firstPointScreen
+  // For an unrotated, unscaled object: screenX = left + localX, screenY = top + localY
+  // But we need to account for any rotation/scaling, so we use the inverse approach:
+  
+  // Temporarily update coords to get the new transform matrix
+  path.setCoords();
+  
+  // Now calculate where the first point appears with current settings
+  const currentMatrix = path.calcTransformMatrix();
+  const currentFirstPointScreen = fabric.util.transformPoint(newFirstPointLocal, currentMatrix);
+  
+  // Calculate the difference and adjust left/top
+  const deltaX = firstPointScreen.x - currentFirstPointScreen.x;
+  const deltaY = firstPointScreen.y - currentFirstPointScreen.y;
+  
   path.set({
-    left: newLeft,
-    top: newTop,
-    width: width,
-    height: height
+    left: path.left + deltaX,
+    top: path.top + deltaY
   });
   
   path.setCoords();
@@ -1505,15 +2197,34 @@ function recalculateBoundingBox(polygon) {
 
 /**
  * Render function for node control points
+ * Shows different styling for selected vs unselected nodes
  */
 function renderNodeControl(ctx, left, top, styleOverride, fabricObject) {
-  const size = 10;
+  // 'this' is the control object, which has anchorIndex
+  const control = this;
+  const isSelected = control && control.anchorIndex !== undefined && selectedNodes.has(control.anchorIndex);
+  
+  const size = isSelected ? 12 : 10;
   ctx.save();
-  ctx.fillStyle = 'white';
-  ctx.strokeStyle = '#1976d2';
+  
+  if (isSelected) {
+    // Selected node: filled blue with white border (like Inkscape)
+    ctx.fillStyle = '#1976d2';
+    ctx.strokeStyle = 'white';
+  } else {
+    // Unselected node: white with blue border
+    ctx.fillStyle = 'white';
+    ctx.strokeStyle = '#1976d2';
+  }
+  
   ctx.lineWidth = 2;
   ctx.beginPath();
-  ctx.arc(left, top, size / 2, 0, Math.PI * 2);
+  // Draw diamond shape like Inkscape
+  ctx.moveTo(left, top - size/2);
+  ctx.lineTo(left + size/2, top);
+  ctx.lineTo(left, top + size/2);
+  ctx.lineTo(left - size/2, top);
+  ctx.closePath();
   ctx.fill();
   ctx.stroke();
   ctx.restore();
@@ -1616,6 +2327,7 @@ export function exitNodeEdit(canvas) {
 /**
  * Convert a line segment to a cubic bezier curve
  * The segment going INTO the specified anchor point
+ * For anchor 0 (first point), converts the closing segment (last segment back to first)
  * @param {fabric.Path} path - The path object
  * @param {number} anchorIndex - Index of the anchor point (from getPathAnchors)
  * @param {fabric.Canvas} canvas - The canvas instance
@@ -1626,6 +2338,11 @@ export function makeSegmentCurve(path, anchorIndex, canvas) {
   
   const anchors = getPathAnchors(path.path);
   if (anchorIndex < 0 || anchorIndex >= anchors.length) return false;
+  
+  // Special case: anchor 0 means convert the closing segment
+  if (anchorIndex === 0) {
+    return makeClosingSegmentCurve(path, canvas);
+  }
   
   const anchor = anchors[anchorIndex];
   const commandIndex = anchor.commandIndex;
@@ -1638,19 +2355,8 @@ export function makeSegmentCurve(path, anchorIndex, canvas) {
   }
   
   // Get the previous anchor point to calculate control points
-  let prevAnchor;
-  if (anchorIndex > 0) {
-    prevAnchor = anchors[anchorIndex - 1];
-  } else {
-    // First point after M - check if path is closed to wrap around
-    const lastCmd = path.path[path.path.length - 1];
-    if (lastCmd[0] === 'Z' && anchors.length > 1) {
-      prevAnchor = anchors[anchors.length - 1];
-    } else {
-      debugLog('[InkscapeTransformMode] Cannot convert first segment');
-      return false;
-    }
-  }
+  // (anchorIndex > 0 is guaranteed since we handle 0 above with makeClosingSegmentCurve)
+  const prevAnchor = anchors[anchorIndex - 1];
   
   const startX = prevAnchor.x;
   const startY = prevAnchor.y;
@@ -1707,6 +2413,11 @@ export function makeSegmentLine(path, anchorIndex, canvas) {
   const anchors = getPathAnchors(path.path);
   if (anchorIndex < 0 || anchorIndex >= anchors.length) return false;
   
+  // Special case: anchor 0 means convert the closing segment
+  if (anchorIndex === 0) {
+    return makeClosingSegmentLine(path, canvas);
+  }
+  
   const anchor = anchors[anchorIndex];
   const commandIndex = anchor.commandIndex;
   const cmd = path.path[commandIndex];
@@ -1741,6 +2452,134 @@ export function makeSegmentLine(path, anchorIndex, canvas) {
 }
 
 /**
+ * Convert the closing segment curve back to a line (implicit Z)
+ * This removes the C command before Z
+ * @param {fabric.Path} path - The path object
+ * @param {fabric.Canvas} canvas - The canvas instance
+ * @returns {boolean} True if conversion was successful
+ */
+export function makeClosingSegmentLine(path, canvas) {
+  if (!path || !path.path) return false;
+  
+  const pathData = path.path;
+  const lastIndex = pathData.length - 1;
+  
+  // Check if path ends with Z
+  if (pathData[lastIndex][0] !== 'Z') {
+    debugLog('[InkscapeTransformMode] Path does not end with Z - no closing segment');
+    return false;
+  }
+  
+  // Check if there's a C command before Z (the closing curve)
+  if (lastIndex < 1) return false;
+  const beforeZ = pathData[lastIndex - 1];
+  
+  if (beforeZ[0] !== 'C') {
+    debugLog('[InkscapeTransformMode] Closing segment is not a curve');
+    return false;
+  }
+  
+  // Remove the C command - Z will implicitly draw a line back to start
+  pathData.splice(lastIndex - 1, 1);
+  
+  debugLog('[InkscapeTransformMode] Converted closing curve to line (removed C before Z)');
+  
+  // Recreate node controls
+  const nodeControls = createPathNodeControls(path);
+  path.controls = nodeControls;
+  
+  path.dirty = true;
+  path.setCoords();
+  if (canvas) canvas.requestRenderAll();
+  
+  return true;
+}
+
+/**
+ * Convert the closing segment (Z) to a cubic bezier curve
+ * This replaces Z with a C command that curves back to the first point
+ * @param {fabric.Path} path - The path object
+ * @param {fabric.Canvas} canvas - The canvas instance
+ * @returns {boolean} True if conversion was successful
+ */
+export function makeClosingSegmentCurve(path, canvas) {
+  if (!path || !path.path) return false;
+  
+  const pathData = path.path;
+  const lastIndex = pathData.length - 1;
+  
+  // Check if path ends with Z
+  if (pathData[lastIndex][0] !== 'Z') {
+    debugLog('[InkscapeTransformMode] Path does not end with Z - no closing segment');
+    return false;
+  }
+  
+  // Get the first point (M command)
+  const firstCmd = pathData[0];
+  if (firstCmd[0] !== 'M') {
+    debugLog('[InkscapeTransformMode] Path does not start with M');
+    return false;
+  }
+  const endX = firstCmd[1];
+  const endY = firstCmd[2];
+  
+  // Get the last anchor point (before Z)
+  let startX, startY;
+  const prevCmd = pathData[lastIndex - 1];
+  switch (prevCmd[0]) {
+    case 'M':
+    case 'L':
+      startX = prevCmd[1];
+      startY = prevCmd[2];
+      break;
+    case 'C':
+      startX = prevCmd[5];
+      startY = prevCmd[6];
+      break;
+    case 'Q':
+      startX = prevCmd[3];
+      startY = prevCmd[4];
+      break;
+    default:
+      debugLog('[InkscapeTransformMode] Unknown command before Z');
+      return false;
+  }
+  
+  // Calculate control points (with perpendicular offset for visible curve)
+  const dx = endX - startX;
+  const dy = endY - startY;
+  const perpX = -dy * 0.25;
+  const perpY = dx * 0.25;
+  
+  const cp1x = startX + dx * 0.33 + perpX;
+  const cp1y = startY + dy * 0.33 + perpY;
+  const cp2x = startX + dx * 0.67 + perpX;
+  const cp2y = startY + dy * 0.67 + perpY;
+  
+  // Replace Z with C command followed by Z
+  // The C command curves back to the first point
+  pathData[lastIndex] = ['C', cp1x, cp1y, cp2x, cp2y, endX, endY];
+  pathData.push(['Z']);
+  
+  debugLog('[InkscapeTransformMode] Converted closing segment to curve:', {
+    from: [startX, startY],
+    to: [endX, endY],
+    cp1: [cp1x, cp1y],
+    cp2: [cp2x, cp2y]
+  });
+  
+  // Recreate node controls
+  const nodeControls = createPathNodeControls(path);
+  path.controls = nodeControls;
+  
+  path.dirty = true;
+  path.setCoords();
+  if (canvas) canvas.requestRenderAll();
+  
+  return true;
+}
+
+/**
  * Make ALL segments of a path into curves
  * Useful for quickly converting a polygon to a fully curved shape
  * @param {fabric.Path} path - The path object
@@ -1757,6 +2596,11 @@ export function makeAllSegmentsCurves(path, canvas) {
     if (makeSegmentCurve(path, i, null)) {
       converted++;
     }
+  }
+  
+  // Also convert the closing segment if path is closed
+  if (makeClosingSegmentCurve(path, null)) {
+    converted++;
   }
   
   debugLog(`[InkscapeTransformMode] Converted ${converted} segments to curves`);
@@ -1790,6 +2634,777 @@ export function getSegmentType(path, anchorIndex) {
     case 'M': return 'move';
     default: return null;
   }
+}
+
+/**
+ * Convert selected segment(s) to curves
+ * Only converts a segment if BOTH of its endpoints are selected
+ * If no nodes are selected, converts all segments
+ * @param {fabric.Path} path - The path object
+ * @param {fabric.Canvas} canvas - The canvas instance
+ */
+export function makeSelectedSegmentsCurves(path, canvas) {
+  if (!path || !path.path) return;
+  
+  if (selectedNodes.size === 0) {
+    // No selection - convert all
+    makeAllSegmentsCurves(path, canvas);
+    return;
+  }
+  
+  const pathData = path.path;
+  const anchors = getPathAnchors(pathData);
+  const numAnchors = anchors.length;
+  
+  // Check if path is closed
+  const lastCmd = pathData[pathData.length - 1];
+  const isClosed = lastCmd && lastCmd[0] === 'Z';
+  
+  let converted = 0;
+  
+  // Check each segment - a segment connects anchor[i] to anchor[i+1]
+  // (or anchor[last] to anchor[0] for closing segment)
+  for (let i = 0; i < numAnchors; i++) {
+    const nextIndex = (i + 1) % numAnchors;
+    
+    // Skip the "wrap-around" segment if path is not closed
+    if (nextIndex === 0 && !isClosed) continue;
+    
+    // Only convert if BOTH endpoints are selected
+    if (selectedNodes.has(i) && selectedNodes.has(nextIndex)) {
+      // This is the segment from anchor[i] to anchor[nextIndex]
+      // The command that defines this segment is at anchor[nextIndex].commandIndex
+      // (except for closing segment which is implicit)
+      
+      if (nextIndex === 0) {
+        // Closing segment - use makeClosingSegmentCurve
+        if (makeClosingSegmentCurve(path, null)) {
+          converted++;
+        }
+      } else {
+        // Regular segment - convert anchor[nextIndex]'s command to curve
+        if (makeSegmentCurve(path, nextIndex, null)) {
+          converted++;
+        }
+      }
+    }
+  }
+  
+  if (converted === 0) {
+    debugLog('[InkscapeTransformMode] No segments converted - select both endpoints of a segment');
+    return;
+  }
+  
+  debugLog(`[InkscapeTransformMode] Converted ${converted} selected segments to curves`);
+  
+  // Regenerate controls and render
+  const nodeControls = createPathNodeControls(path);
+  path.controls = nodeControls;
+  path.dirty = true;
+  path.setCoords();
+  if (canvas) canvas.requestRenderAll();
+}
+
+/**
+ * Convert selected segment(s) to lines
+ * Only converts a segment if BOTH of its endpoints are selected
+ * If no nodes are selected, converts all segments
+ * @param {fabric.Path} path - The path object
+ * @param {fabric.Canvas} canvas - The canvas instance
+ */
+export function makeSelectedSegmentsLines(path, canvas) {
+  if (!path || !path.path) return;
+  
+  const pathData = path.path;
+  
+  if (selectedNodes.size === 0) {
+    // No selection - convert all curves to lines
+    for (let i = 0; i < pathData.length; i++) {
+      const cmd = pathData[i];
+      if (cmd[0] === 'C') {
+        pathData[i] = ['L', cmd[5], cmd[6]];
+      } else if (cmd[0] === 'Q') {
+        pathData[i] = ['L', cmd[3], cmd[4]];
+      }
+    }
+  } else {
+    // Convert only segments where BOTH endpoints are selected
+    const anchors = getPathAnchors(pathData);
+    const numAnchors = anchors.length;
+    
+    // Check if path is closed
+    const lastCmd = pathData[pathData.length - 1];
+    const isClosed = lastCmd && lastCmd[0] === 'Z';
+    
+    let converted = 0;
+    
+    for (let i = 0; i < numAnchors; i++) {
+      const nextIndex = (i + 1) % numAnchors;
+      
+      // Skip the "wrap-around" segment if path is not closed
+      if (nextIndex === 0 && !isClosed) continue;
+      
+      // Only convert if BOTH endpoints are selected
+      if (selectedNodes.has(i) && selectedNodes.has(nextIndex)) {
+        if (nextIndex === 0) {
+          // Closing segment - need to handle specially
+          // Look for a closing curve (C command that ends at first point)
+          for (let j = pathData.length - 2; j >= 0; j--) {
+            const cmd = pathData[j];
+            if (cmd[0] === 'C') {
+              const firstAnchor = anchors[0];
+              if (Math.abs(cmd[5] - firstAnchor.x) < 0.001 && 
+                  Math.abs(cmd[6] - firstAnchor.y) < 0.001) {
+                // This is the closing curve - convert to L
+                pathData[j] = ['L', cmd[5], cmd[6]];
+                converted++;
+                break;
+              }
+            }
+            if (cmd[0] === 'M') break;
+          }
+        } else {
+          // Regular segment
+          makeSegmentLine(path, nextIndex, null);
+          converted++;
+        }
+      }
+    }
+    
+    if (converted === 0) {
+      debugLog('[InkscapeTransformMode] No segments converted - select both endpoints of a segment');
+      return;
+    }
+  }
+  
+  debugLog(`[InkscapeTransformMode] Converted selected segments to lines`);
+  
+  // Regenerate controls and render
+  const nodeControls = createPathNodeControls(path);
+  path.controls = nodeControls;
+  path.dirty = true;
+  path.setCoords();
+  if (canvas) canvas.requestRenderAll();
+}
+
+/**
+ * Delete selected node(s) from the path
+ * @param {fabric.Path} path - The path object
+ * @param {fabric.Canvas} canvas - The canvas instance
+ * @returns {boolean} True if any nodes were deleted
+ */
+export function deleteSelectedNodes(path, canvas) {
+  if (!path || !path.path || selectedNodes.size === 0) return false;
+  
+  const pathData = path.path;
+  let anchors = getPathAnchors(pathData);
+  
+  // Sort selected indices in descending order to delete from end first
+  // This prevents index shifting issues
+  const sortedIndices = Array.from(selectedNodes).sort((a, b) => b - a);
+  
+  let deleted = 0;
+  
+  for (const anchorIndex of sortedIndices) {
+    // Recalculate anchors after each deletion since indices change
+    anchors = getPathAnchors(pathData);
+    
+    if (anchorIndex < 0 || anchorIndex >= anchors.length) continue;
+    
+    // Don't allow deleting if it would leave less than 2 points
+    if (anchors.length - deleted <= 2) {
+      debugLog('[InkscapeTransformMode] Cannot delete - path needs at least 2 points');
+      break;
+    }
+    
+    const anchor = anchors[anchorIndex];
+    const commandIndex = anchor.commandIndex;
+    
+    // Special handling for first point (M command)
+    if (anchorIndex === 0) {
+      // We need to promote the next point to be the new M command
+      if (anchors.length > 1) {
+        const nextAnchor = anchors[1];
+        const nextCmdIndex = nextAnchor.commandIndex;
+        const nextCmd = pathData[nextCmdIndex];
+        
+        // Update the M command with the next point's position
+        pathData[0][1] = nextAnchor.x;
+        pathData[0][2] = nextAnchor.y;
+        
+        // Remove the next command (which has now been absorbed into M)
+        pathData.splice(nextCmdIndex, 1);
+        
+        deleted++;
+        debugLog(`[InkscapeTransformMode] Deleted first node, promoted next point to M`);
+      }
+      continue;
+    }
+    
+    // Remove the command at this index
+    pathData.splice(commandIndex, 1);
+    deleted++;
+    
+    debugLog(`[InkscapeTransformMode] Deleted node at anchor ${anchorIndex}, command ${commandIndex}`);
+  }
+  
+  if (deleted > 0) {
+    // Clear selection since indices are now invalid
+    selectedNodes.clear();
+    
+    // Regenerate controls
+    const nodeControls = createPathNodeControls(path);
+    path.controls = nodeControls;
+    path.dirty = true;
+    path.setCoords();
+    if (canvas) canvas.requestRenderAll();
+  }
+  
+  return deleted > 0;
+}
+
+/**
+ * Add a node to the closing segment (last anchor to first anchor)
+ * @param {fabric.Path} path - The path object
+ * @param {Array} anchors - Array of anchor objects from getPathAnchors
+ * @param {number} lastAnchorIndex - Index of the last anchor
+ * @param {fabric.Canvas} canvas - The canvas instance
+ * @returns {boolean} True if a node was added
+ */
+function addNodeToClosingSegment(path, anchors, lastAnchorIndex, canvas) {
+  const pathData = path.path;
+  const lastIndex = pathData.length - 1;
+  
+  // Make sure path ends with Z
+  if (pathData[lastIndex][0] !== 'Z') {
+    debugLog('[InkscapeTransformMode] Path does not end with Z - no closing segment');
+    return false;
+  }
+  
+  // Get the first point (M command) - this is where the closing segment ends
+  const firstCmd = pathData[0];
+  if (firstCmd[0] !== 'M') {
+    debugLog('[InkscapeTransformMode] Path does not start with M');
+    return false;
+  }
+  const endX = firstCmd[1];
+  const endY = firstCmd[2];
+  
+  // Get the last anchor point (before Z) - this is where the closing segment starts
+  const lastAnchor = anchors[lastAnchorIndex];
+  const startX = lastAnchor.x;
+  const startY = lastAnchor.y;
+  
+  // Check if there's an explicit command for the closing segment (C before Z)
+  // or if it's an implicit straight line
+  const prevCmd = pathData[lastIndex - 1];
+  const prevCmdType = prevCmd[0];
+  
+  // Check if the command before Z explicitly goes to first point (explicit closing segment)
+  // or if Z just creates an implicit line from the last anchor to first
+  let isExplicitClosingCurve = false;
+  if (prevCmdType === 'C') {
+    // Check if the C command ends at the first point
+    const cEndX = prevCmd[5];
+    const cEndY = prevCmd[6];
+    if (Math.abs(cEndX - endX) < 0.01 && Math.abs(cEndY - endY) < 0.01) {
+      isExplicitClosingCurve = true;
+    }
+  }
+  
+  if (isExplicitClosingCurve) {
+    // Split the explicit C command that goes to the first point
+    const cp1x = prevCmd[1], cp1y = prevCmd[2];
+    const cp2x = prevCmd[3], cp2y = prevCmd[4];
+    // endX, endY are the curve's end point (which equals first point)
+    
+    // Get the actual start of this C command (the anchor before it)
+    const cmdStartAnchor = anchors[lastAnchorIndex - 1] || anchors[lastAnchorIndex];
+    const cStartX = cmdStartAnchor.x;
+    const cStartY = cmdStartAnchor.y;
+    
+    const t = 0.5;
+    
+    // de Casteljau's algorithm
+    const p01x = cStartX + t * (cp1x - cStartX);
+    const p01y = cStartY + t * (cp1y - cStartY);
+    const p12x = cp1x + t * (cp2x - cp1x);
+    const p12y = cp1y + t * (cp2y - cp1y);
+    const p23x = cp2x + t * (endX - cp2x);
+    const p23y = cp2y + t * (endY - cp2y);
+    
+    const p012x = p01x + t * (p12x - p01x);
+    const p012y = p01y + t * (p12y - p01y);
+    const p123x = p12x + t * (p23x - p12x);
+    const p123y = p12y + t * (p23y - p12y);
+    
+    const midX = p012x + t * (p123x - p012x);
+    const midY = p012y + t * (p123y - p012y);
+    
+    // Replace the C command with first half
+    pathData[lastIndex - 1] = ['C', p01x, p01y, p012x, p012y, midX, midY];
+    
+    // Insert second half before Z
+    pathData.splice(lastIndex, 0, ['C', p123x, p123y, p23x, p23y, endX, endY]);
+    
+    debugLog(`[InkscapeTransformMode] Split closing bezier at midpoint: (${midX}, ${midY})`);
+    
+  } else {
+    // Implicit straight line from last anchor to first - insert L commands
+    const midX = (startX + endX) / 2;
+    const midY = (startY + endY) / 2;
+    
+    // Insert L to midpoint, then L to first point, before Z
+    // Actually, we just need one L to the midpoint - the Z will still close to first point
+    pathData.splice(lastIndex, 0, ['L', midX, midY]);
+    
+    debugLog(`[InkscapeTransformMode] Added node at midpoint of closing segment: (${midX}, ${midY})`);
+  }
+  
+  // Clear selection and select the new node (it's now the last anchor before Z)
+  selectedNodes.clear();
+  // The new node is at index lastAnchorIndex + 1 (one after the previous last anchor)
+  selectedNodes.add(lastAnchorIndex + 1);
+  
+  // Regenerate controls
+  const nodeControls = createPathNodeControls(path);
+  path.controls = nodeControls;
+  path.dirty = true;
+  path.setCoords();
+  if (canvas) canvas.requestRenderAll();
+  
+  return true;
+}
+
+/**
+ * Add a node by splitting a segment at its midpoint
+ * Adds a node to the segment AFTER the selected node
+ * @param {fabric.Path} path - The path object
+ * @param {fabric.Canvas} canvas - The canvas instance
+ * @returns {boolean} True if a node was added
+ */
+export function addNodeAtSelectedSegment(path, canvas) {
+  if (!path || !path.path) return false;
+  
+  const pathData = path.path;
+  const anchors = getPathAnchors(pathData);
+  const numAnchors = anchors.length;
+  
+  // Check if path is closed
+  const lastCmd = pathData[pathData.length - 1];
+  const isClosed = lastCmd && lastCmd[0] === 'Z';
+  
+  // Find a segment where BOTH endpoints are selected
+  let segmentStart = -1;
+  let segmentEnd = -1;
+  
+  for (let i = 0; i < numAnchors; i++) {
+    const nextIndex = (i + 1) % numAnchors;
+    
+    // Skip wrap-around segment if path is not closed
+    if (nextIndex === 0 && !isClosed) continue;
+    
+    // Check if both endpoints are selected
+    if (selectedNodes.has(i) && selectedNodes.has(nextIndex)) {
+      segmentStart = i;
+      segmentEnd = nextIndex;
+      break; // Use first matching segment
+    }
+  }
+  
+  if (segmentStart === -1) {
+    debugLog('[InkscapeTransformMode] Select both endpoints of a segment to add a node');
+    return false;
+  }
+  
+  // Handle closing segment specially (last anchor to first anchor)
+  if (segmentEnd === 0) {
+    return addNodeToClosingSegment(path, anchors, segmentStart, canvas);
+  }
+  
+  const currentAnchor = anchors[segmentStart];
+  const nextCommandIndex = anchors[segmentEnd].commandIndex;
+  const nextCmd = pathData[nextCommandIndex];
+  
+  // Get start point (current anchor)
+  const startX = currentAnchor.x;
+  const startY = currentAnchor.y;
+  
+  if (nextCmd[0] === 'L') {
+    // Split a line segment - insert new L at midpoint
+    const endX = nextCmd[1];
+    const endY = nextCmd[2];
+    const midX = (startX + endX) / 2;
+    const midY = (startY + endY) / 2;
+    
+    // Insert new L command at the midpoint
+    pathData.splice(nextCommandIndex, 0, ['L', midX, midY]);
+    
+    debugLog(`[InkscapeTransformMode] Added node at midpoint of line segment: (${midX}, ${midY})`);
+    
+  } else if (nextCmd[0] === 'C') {
+    // Split a cubic bezier using de Casteljau's algorithm at t=0.5
+    const cp1x = nextCmd[1], cp1y = nextCmd[2];
+    const cp2x = nextCmd[3], cp2y = nextCmd[4];
+    const endX = nextCmd[5], endY = nextCmd[6];
+    
+    const t = 0.5;
+    
+    // First level interpolation
+    const p01x = startX + t * (cp1x - startX);
+    const p01y = startY + t * (cp1y - startY);
+    const p12x = cp1x + t * (cp2x - cp1x);
+    const p12y = cp1y + t * (cp2y - cp1y);
+    const p23x = cp2x + t * (endX - cp2x);
+    const p23y = cp2y + t * (endY - cp2y);
+    
+    // Second level interpolation
+    const p012x = p01x + t * (p12x - p01x);
+    const p012y = p01y + t * (p12y - p01y);
+    const p123x = p12x + t * (p23x - p12x);
+    const p123y = p12y + t * (p23y - p12y);
+    
+    // Third level - the point on the curve
+    const midX = p012x + t * (p123x - p012x);
+    const midY = p012y + t * (p123y - p012y);
+    
+    // Replace original C with first half curve
+    pathData[nextCommandIndex] = ['C', p01x, p01y, p012x, p012y, midX, midY];
+    
+    // Insert second half curve after
+    pathData.splice(nextCommandIndex + 1, 0, ['C', p123x, p123y, p23x, p23y, endX, endY]);
+    
+    debugLog(`[InkscapeTransformMode] Split bezier curve at midpoint: (${midX}, ${midY})`);
+    
+  } else {
+    debugLog(`[InkscapeTransformMode] Cannot split segment type: ${nextCmd[0]}`);
+    return false;
+  }
+  
+  // Clear selection and select the new node
+  selectedNodes.clear();
+  selectedNodes.add(segmentStart + 1);
+  
+  // Regenerate controls
+  const nodeControls = createPathNodeControls(path);
+  path.controls = nodeControls;
+  path.dirty = true;
+  path.setCoords();
+  if (canvas) canvas.requestRenderAll();
+  
+  return true;
+}
+
+/**
+ * Make selected node(s) cusp (corner) - handles move independently
+ * This is the default behavior, so this mainly serves as a visual indicator
+ * @param {fabric.Path} path - The path object
+ * @param {fabric.Canvas} canvas - The canvas instance
+ */
+export function makeNodesCusp(path, canvas) {
+  if (!path || !path.path || selectedNodes.size === 0) return;
+  
+  // For cusp nodes, we don't need to change the path data
+  // The handles already move independently
+  // This could store node type metadata for future use
+  
+  debugLog(`[InkscapeTransformMode] Set ${selectedNodes.size} node(s) to cusp type`);
+  
+  // Mark nodes as cusp type (for potential future visualization)
+  for (const anchorIndex of selectedNodes) {
+    // Store node type on the path object
+    if (!path._nodeTypes) path._nodeTypes = {};
+    path._nodeTypes[anchorIndex] = 'cusp';
+  }
+  
+  if (canvas) canvas.requestRenderAll();
+}
+
+/**
+ * Make selected node(s) smooth - handles are collinear but can have different lengths
+ * @param {fabric.Path} path - The path object
+ * @param {fabric.Canvas} canvas - The canvas instance
+ */
+/**
+ * Get the incoming and outgoing handles for an anchor
+ * Properly handles anchor 0 in closed paths (handles wrap around)
+ * @param {Array} pathData - The path data array
+ * @param {Array} anchors - The anchors array from getPathAnchors
+ * @param {number} anchorIndex - Index of the anchor
+ * @returns {Object} {inHandle: {cmdIndex, x, y}|null, outHandle: {cmdIndex, x, y}|null}
+ */
+function getHandlesForAnchor(pathData, anchors, anchorIndex) {
+  const result = { inHandle: null, outHandle: null };
+  
+  if (anchorIndex < 0 || anchorIndex >= anchors.length) return result;
+  
+  const anchor = anchors[anchorIndex];
+  
+  // Skip if this is a closing curve (it doesn't have its own handles in the UI sense)
+  if (anchor.isClosingCurve) return result;
+  
+  // Check if path is closed
+  const lastCmd = pathData[pathData.length - 1];
+  const isClosed = lastCmd && lastCmd[0] === 'Z';
+  
+  // Get first point for detecting closing curves
+  const firstX = pathData[0][1];
+  const firstY = pathData[0][2];
+  
+  // Find the "real" last anchor index (excluding closing curve)
+  let lastRealAnchorIndex = anchors.length - 1;
+  if (anchors[lastRealAnchorIndex] && anchors[lastRealAnchorIndex].isClosingCurve) {
+    lastRealAnchorIndex--;
+  }
+  
+  // Find incoming handle (cp2)
+  if (anchor.command === 'C') {
+    // Regular C command - cp2 is in this command
+    result.inHandle = {
+      cmdIndex: anchor.commandIndex,
+      x: anchor.cp2x,
+      y: anchor.cp2y
+    };
+  } else if (anchorIndex === 0 && isClosed) {
+    // Anchor 0 in closed path - look for closing curve's cp2
+    for (let i = pathData.length - 2; i >= 0; i--) {
+      const cmd = pathData[i];
+      if (cmd[0] === 'C') {
+        if (Math.abs(cmd[5] - firstX) < 0.001 && Math.abs(cmd[6] - firstY) < 0.001) {
+          result.inHandle = {
+            cmdIndex: i,
+            x: cmd[3],
+            y: cmd[4]
+          };
+          break;
+        }
+      }
+      if (cmd[0] === 'M') break;
+    }
+  }
+  
+  // Find outgoing handle (cp1 of next curve)
+  if (anchorIndex === 0) {
+    // Anchor 0 - look for first C command after M
+    for (let i = 1; i < pathData.length; i++) {
+      if (pathData[i][0] === 'C') {
+        result.outHandle = {
+          cmdIndex: i,
+          x: pathData[i][1],
+          y: pathData[i][2]
+        };
+        break;
+      }
+      if (pathData[i][0] === 'Z') break;
+    }
+  } else if (anchorIndex < anchors.length - 1) {
+    // Look at next anchor's command
+    const nextAnchor = anchors[anchorIndex + 1];
+    if (nextAnchor.command === 'C') {
+      result.outHandle = {
+        cmdIndex: nextAnchor.commandIndex,
+        x: pathData[nextAnchor.commandIndex][1],
+        y: pathData[nextAnchor.commandIndex][2]
+      };
+    }
+  } else if (isClosed && anchorIndex === lastRealAnchorIndex) {
+    // Last real anchor in closed path - look for closing curve's cp1
+    // The closing curve goes FROM this anchor TO anchor 0
+    for (let i = pathData.length - 2; i >= 0; i--) {
+      const cmd = pathData[i];
+      if (cmd[0] === 'C') {
+        if (Math.abs(cmd[5] - firstX) < 0.001 && Math.abs(cmd[6] - firstY) < 0.001) {
+          result.outHandle = {
+            cmdIndex: i,
+            x: cmd[1],
+            y: cmd[2]
+          };
+          break;
+        }
+      }
+      if (cmd[0] === 'M') break;
+    }
+  }
+  
+  return result;
+}
+
+export function makeNodesSmooth(path, canvas) {
+  if (!path || !path.path || selectedNodes.size === 0) return;
+  
+  const pathData = path.path;
+  const anchors = getPathAnchors(pathData);
+  
+  for (const anchorIndex of selectedNodes) {
+    if (anchorIndex < 0 || anchorIndex >= anchors.length) continue;
+    
+    const anchor = anchors[anchorIndex];
+    const anchorX = anchor.x;
+    const anchorY = anchor.y;
+    
+    // Get handles using the helper function
+    const handles = getHandlesForAnchor(pathData, anchors, anchorIndex);
+    
+    const inHandle = handles.inHandle;
+    const outHandle = handles.outHandle;
+    
+    // If we have both handles, make them collinear
+    if (inHandle && outHandle) {
+      // Calculate the average direction
+      const inDx = anchorX - inHandle.x;
+      const inDy = anchorY - inHandle.y;
+      const outDx = outHandle.x - anchorX;
+      const outDy = outHandle.y - anchorY;
+      
+      const inLen = Math.sqrt(inDx * inDx + inDy * inDy);
+      const outLen = Math.sqrt(outDx * outDx + outDy * outDy);
+      
+      if (inLen > 0 && outLen > 0) {
+        // Average the directions (normalized)
+        const avgDx = (inDx / inLen + outDx / outLen) / 2;
+        const avgDy = (inDy / inLen + outDy / outLen) / 2;
+        const avgLen = Math.sqrt(avgDx * avgDx + avgDy * avgDy);
+        
+        if (avgLen > 0) {
+          const normDx = avgDx / avgLen;
+          const normDy = avgDy / avgLen;
+          
+          // Update incoming handle (cp2) - keep original length
+          const newInX = anchorX - normDx * inLen;
+          const newInY = anchorY - normDy * inLen;
+          pathData[inHandle.cmdIndex][3] = newInX;
+          pathData[inHandle.cmdIndex][4] = newInY;
+          
+          // Update outgoing handle (cp1) - keep original length
+          const newOutX = anchorX + normDx * outLen;
+          const newOutY = anchorY + normDy * outLen;
+          pathData[outHandle.cmdIndex][1] = newOutX;
+          pathData[outHandle.cmdIndex][2] = newOutY;
+        }
+      }
+    }
+    
+    // Store node type
+    if (!path._nodeTypes) path._nodeTypes = {};
+    path._nodeTypes[anchorIndex] = 'smooth';
+  }
+  
+  debugLog(`[InkscapeTransformMode] Set ${selectedNodes.size} node(s) to smooth type`);
+  
+  // Regenerate controls
+  const nodeControls = createPathNodeControls(path);
+  path.controls = nodeControls;
+  path.dirty = true;
+  path.setCoords();
+  if (canvas) canvas.requestRenderAll();
+}
+
+/**
+ * Make selected node(s) auto-smooth - handles are collinear and symmetric
+ * @param {fabric.Path} path - The path object
+ * @param {fabric.Canvas} canvas - The canvas instance
+ */
+export function makeNodesAutoSmooth(path, canvas) {
+  if (!path || !path.path || selectedNodes.size === 0) return;
+  
+  const pathData = path.path;
+  const anchors = getPathAnchors(pathData);
+  
+  // Check if path is closed
+  const lastCmd = pathData[pathData.length - 1];
+  const isClosed = lastCmd && lastCmd[0] === 'Z';
+  
+  // Find the "real" last anchor index (excluding closing curve)
+  let lastRealAnchorIndex = anchors.length - 1;
+  if (anchors[lastRealAnchorIndex] && anchors[lastRealAnchorIndex].isClosingCurve) {
+    lastRealAnchorIndex--;
+  }
+  
+  for (const anchorIndex of selectedNodes) {
+    if (anchorIndex < 0 || anchorIndex >= anchors.length) continue;
+    
+    const anchor = anchors[anchorIndex];
+    
+    // Skip closing curve anchors
+    if (anchor.isClosingCurve) continue;
+    
+    const anchorX = anchor.x;
+    const anchorY = anchor.y;
+    
+    // Get previous and next anchor points for auto-smooth calculation
+    let prevX, prevY, nextX, nextY;
+    
+    if (anchorIndex > 0) {
+      const prevAnchor = anchors[anchorIndex - 1];
+      if (!prevAnchor.isClosingCurve) {
+        prevX = prevAnchor.x;
+        prevY = prevAnchor.y;
+      }
+    } else if (isClosed && lastRealAnchorIndex > 0) {
+      // Anchor 0 in closed path - previous is last real anchor
+      const prevAnchor = anchors[lastRealAnchorIndex];
+      prevX = prevAnchor.x;
+      prevY = prevAnchor.y;
+    }
+    
+    if (anchorIndex < lastRealAnchorIndex) {
+      const nextAnchor = anchors[anchorIndex + 1];
+      if (!nextAnchor.isClosingCurve) {
+        nextX = nextAnchor.x;
+        nextY = nextAnchor.y;
+      }
+    } else if (isClosed && anchorIndex === lastRealAnchorIndex) {
+      // Last real anchor in closed path - next is anchor 0
+      nextX = anchors[0].x;
+      nextY = anchors[0].y;
+    }
+    
+    // Calculate smooth handles based on neighboring anchors
+    if (prevX !== undefined && nextX !== undefined) {
+      // Direction from prev to next anchor
+      const dx = nextX - prevX;
+      const dy = nextY - prevY;
+      const len = Math.sqrt(dx * dx + dy * dy);
+      
+      if (len > 0) {
+        const normDx = dx / len;
+        const normDy = dy / len;
+        
+        // Calculate handle length as 1/3 of distance to neighbors
+        const prevDist = Math.sqrt((anchorX - prevX) ** 2 + (anchorY - prevY) ** 2);
+        const nextDist = Math.sqrt((nextX - anchorX) ** 2 + (nextY - anchorY) ** 2);
+        const handleLen = Math.min(prevDist, nextDist) / 3;
+        
+        // Get handles using the helper
+        const handles = getHandlesForAnchor(pathData, anchors, anchorIndex);
+        
+        // Update incoming handle (cp2)
+        if (handles.inHandle) {
+          pathData[handles.inHandle.cmdIndex][3] = anchorX - normDx * handleLen;
+          pathData[handles.inHandle.cmdIndex][4] = anchorY - normDy * handleLen;
+        }
+        
+        // Update outgoing handle (cp1)
+        if (handles.outHandle) {
+          pathData[handles.outHandle.cmdIndex][1] = anchorX + normDx * handleLen;
+          pathData[handles.outHandle.cmdIndex][2] = anchorY + normDy * handleLen;
+        }
+      }
+    }
+    
+    // Store node type
+    if (!path._nodeTypes) path._nodeTypes = {};
+    path._nodeTypes[anchorIndex] = 'auto-smooth';
+  }
+  
+  debugLog(`[InkscapeTransformMode] Set ${selectedNodes.size} node(s) to auto-smooth type`);
+  
+  // Regenerate controls
+  const nodeControls = createPathNodeControls(path);
+  path.controls = nodeControls;
+  path.dirty = true;
+  path.setCoords();
+  if (canvas) canvas.requestRenderAll();
 }
 
 /**

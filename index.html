@@ -46,20 +46,33 @@
         <button class="tool-btn" id="tool-zoom" title="Zoom" aria-label="Zoom tool" type="button"><img src="assets/icons/zoom.svg" alt="Zoom"></button>
       </div>
       
-      <!-- Node Edit Context Toolbar -->
+      <!-- Node Edit Context Toolbar - positioned next to leftToolbar -->
       <div id="nodeToolbar" class="node-toolbar hidden">
-        <span class="toolbar-label">Node:</span>
-        <button id="btn-make-curve" class="node-tool-btn" title="Make segment curved (Bezier)">
-          <span>Make Curve</span>
+        <button id="btn-node-add" class="node-tool-btn" title="Add node">
+          <img src="assets/icons/node_editing/node-add.svg" alt="Add node">
         </button>
-        <button id="btn-make-line" class="node-tool-btn" title="Make segment straight">
-          <span>Make Line</span>
+        <button id="btn-node-delete" class="node-tool-btn" title="Delete node">
+          <img src="assets/icons/node_editing/node-delete.svg" alt="Delete node">
         </button>
         <div class="toolbar-sep"></div>
-        <button id="btn-exit-node-edit" class="node-tool-btn" title="Exit node editing (Escape)">
-          <span>Done</span>
+        <button id="btn-node-cusp" class="node-tool-btn" title="Make corner (cusp)">
+          <img src="assets/icons/node_editing/node-type-cusp.svg" alt="Corner">
+        </button>
+        <button id="btn-node-smooth" class="node-tool-btn" title="Make smooth">
+          <img src="assets/icons/node_editing/node-type-smooth.svg" alt="Smooth">
+        </button>
+        <button id="btn-node-auto-smooth" class="node-tool-btn" title="Make auto-smooth">
+          <img src="assets/icons/node_editing/node-type-auto-smooth.svg" alt="Auto-smooth">
+        </button>
+        <div class="toolbar-sep"></div>
+        <button id="btn-make-line" class="node-tool-btn" title="Make segment straight">
+          <img src="assets/icons/node_editing/node-segment-line.svg" alt="Make line">
+        </button>
+        <button id="btn-make-curve" class="node-tool-btn" title="Make segment curved">
+          <img src="assets/icons/node_editing/node-segment-curve.svg" alt="Make curve">
         </button>
       </div>
+      
       <canvas id="c"></canvas>
       <aside id="panel">
         <h3>Opdracht</h3>

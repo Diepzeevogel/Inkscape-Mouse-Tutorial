@@ -4,7 +4,27 @@ import { startTutorial, startTutorialDirect, startLesson2, startLesson3, startLe
 import { startLesson6, cleanupLesson6 } from './Lesson6.js';
 import { shapeDrawingController } from './ShapeDrawingController.js';
 import { penToolController } from './PenToolController.js';
-import { isInNodeEditMode, exitNodeEdit, makeSegmentCurve, makeSegmentLine, makeAllSegmentsCurves, getCurrentMode, TRANSFORM_MODE } from './InkscapeTransformMode.js';
+import { isInNodeEditMode, exitNodeEdit, makeSegmentCurve, makeSegmentLine, makeAllSegmentsCurves, makeSelectedSegmentsCurves, makeSelectedSegmentsLines, getSelectedNodes, clearNodeSelection, deleteSelectedNodes, addNodeAtSelectedSegment, makeNodesCusp, makeNodesSmooth, makeNodesAutoSmooth, getCurrentMode, TRANSFORM_MODE, enterNodeEditMode } from './InkscapeTransformMode.js';
+import { LESSON_FEATURES } from './constants.js';
+
+/**
+ * Get the current lesson number from the URL hash
+ * @returns {number|null} The current lesson number or null if not found
+ */
+function getCurrentLessonNumber() {
+  const match = (location.hash || '').match(/lesson=(\d+)/);
+  return match ? parseInt(match[1], 10) : null;
+}
+
+/**
+ * Check if a specific feature is enabled for the current lesson
+ * @param {string} featureName - The name of the feature to check (e.g., 'NODE_EDITING', 'SHAPE_TOOLS')
+ * @returns {boolean} True if the feature is enabled for the current lesson
+ */
+function isFeatureEnabled(featureName) {
+  const lesson = getCurrentLessonNumber();
+  return lesson && LESSON_FEATURES[lesson]?.[featureName] === true;
+}
 
 // Device detection - check for desktop/laptop with mouse
 function isDesktopWithMouse() {
@@ -340,9 +360,13 @@ if (selectTool) {
   });
 }
 
-// Disable all non-select tools for the first lesson
+// Disable all non-select tools for the first lesson (node tool is gated by NODE_EDITING feature)
 document.querySelectorAll('#leftToolbar .tool-btn').forEach(b => {
   if (b.id !== 'tool-select') {
+    // Node tool is enabled only if NODE_EDITING feature is available for current lesson
+    if (b.id === 'tool-node' && isFeatureEnabled('NODE_EDITING')) {
+      return; // Keep node tool enabled
+    }
     b.disabled = true;
     b.setAttribute('aria-disabled', 'true');
   }
@@ -390,12 +414,14 @@ if (penTool) {
   });
 }
 
-// When select tool is clicked, disable shape drawing and pen tool
+// When select tool is clicked, disable shape drawing, pen tool, and exit node edit mode
 if (selectTool) {
   const originalSelectHandler = selectTool.onclick;
   selectTool.addEventListener('click', () => {
     shapeDrawingController.disable();
     penToolController.disable();
+    // Exit node edit mode if active
+    exitNodeEdit(canvas);
   }, { capture: true });
 }
 
@@ -424,10 +450,15 @@ canvas.on('object:modified', (e) => {
 const nodeToolbar = document.getElementById('nodeToolbar');
 const btnMakeCurve = document.getElementById('btn-make-curve');
 const btnMakeLine = document.getElementById('btn-make-line');
-const btnExitNodeEdit = document.getElementById('btn-exit-node-edit');
+const btnNodeAdd = document.getElementById('btn-node-add');
+const btnNodeDelete = document.getElementById('btn-node-delete');
+const btnNodeCusp = document.getElementById('btn-node-cusp');
+const btnNodeSmooth = document.getElementById('btn-node-smooth');
+const btnNodeAutoSmooth = document.getElementById('btn-node-auto-smooth');
+const nodeTool = document.getElementById('tool-node');
 
 /**
- * Update node toolbar visibility based on current selection mode
+ * Update node toolbar visibility and tool button states based on current selection mode
  */
 function updateNodeToolbarVisibility() {
   if (!nodeToolbar) return;
@@ -437,9 +468,40 @@ function updateNodeToolbarVisibility() {
   
   if (inNodeEdit) {
     nodeToolbar.classList.remove('hidden');
+    // Activate the node tool button in leftToolbar
+    if (nodeTool) {
+      document.querySelectorAll('#leftToolbar .tool-btn').forEach(b => b.classList.remove('active'));
+      nodeTool.classList.add('active');
+    }
   } else {
     nodeToolbar.classList.add('hidden');
+    // When exiting node edit mode, activate the select tool
+    if (selectTool && nodeTool && nodeTool.classList.contains('active')) {
+      document.querySelectorAll('#leftToolbar .tool-btn').forEach(b => b.classList.remove('active'));
+      selectTool.classList.add('active');
+    }
   }
+}
+
+// Node tool button handler - enter node edit mode when clicked with a selected shape
+if (nodeTool) {
+  nodeTool.addEventListener('click', () => {
+    // Only allow node editing if the feature is enabled for the current lesson
+    if (!isFeatureEnabled('NODE_EDITING')) return;
+    
+    const activeObj = canvas.getActiveObject();
+    
+    // If an object is selected and it can be node-edited
+    if (activeObj && (activeObj.points || activeObj.path)) {
+      // Enter node edit mode
+      enterNodeEditMode(activeObj, canvas);
+      canvas.requestRenderAll();
+    } else if (activeObj) {
+      // Object selected but not node-editable - just activate the tool visually
+      document.querySelectorAll('#leftToolbar .tool-btn').forEach(b => b.classList.remove('active'));
+      nodeTool.classList.add('active');
+    }
+  });
 }
 
 // Listen for mode changes
@@ -449,47 +511,71 @@ canvas.on('selection:cleared', updateNodeToolbarVisibility);
 // Also check after any render in case mode changed via double-click
 canvas.on('after:render', updateNodeToolbarVisibility);
 
-// Make Curve button - convert all line segments to curves
+// Make Curve button - convert selected segment(s) to curves
 if (btnMakeCurve) {
   btnMakeCurve.addEventListener('click', () => {
     const activeObj = canvas.getActiveObject();
     if (activeObj && activeObj.path) {
-      // For now, convert ALL segments to curves
-      // In the future, we can add per-segment selection
-      makeAllSegmentsCurves(activeObj, canvas);
+      makeSelectedSegmentsCurves(activeObj, canvas);
     }
   });
 }
 
-// Make Line button - convert curve back to line
-// For now, converts all curves back to lines
+// Make Line button - convert selected segment(s) to lines
 if (btnMakeLine) {
   btnMakeLine.addEventListener('click', () => {
     const activeObj = canvas.getActiveObject();
     if (activeObj && activeObj.path) {
-      // Convert all curve segments back to lines
-      for (let i = 0; i < activeObj.path.length; i++) {
-        const cmd = activeObj.path[i];
-        if (cmd[0] === 'C') {
-          // Convert cubic bezier to line - keep endpoint
-          activeObj.path[i] = ['L', cmd[5], cmd[6]];
-        } else if (cmd[0] === 'Q') {
-          // Convert quadratic bezier to line
-          activeObj.path[i] = ['L', cmd[3], cmd[4]];
-        }
-      }
-      activeObj.dirty = true;
-      activeObj.setCoords();
-      canvas.requestRenderAll();
+      makeSelectedSegmentsLines(activeObj, canvas);
     }
   });
 }
 
-// Exit Node Edit button
-if (btnExitNodeEdit) {
-  btnExitNodeEdit.addEventListener('click', () => {
-    exitNodeEdit(canvas);
-    updateNodeToolbarVisibility();
+// Node Add button - add node to selected segment
+if (btnNodeAdd) {
+  btnNodeAdd.addEventListener('click', () => {
+    const activeObj = canvas.getActiveObject();
+    if (activeObj && activeObj.path) {
+      addNodeAtSelectedSegment(activeObj, canvas);
+    }
+  });
+}
+
+// Node Delete button - delete selected node(s)
+if (btnNodeDelete) {
+  btnNodeDelete.addEventListener('click', () => {
+    const activeObj = canvas.getActiveObject();
+    if (activeObj && activeObj.path) {
+      deleteSelectedNodes(activeObj, canvas);
+    }
+  });
+}
+
+// Node type buttons
+if (btnNodeCusp) {
+  btnNodeCusp.addEventListener('click', () => {
+    const activeObj = canvas.getActiveObject();
+    if (activeObj && activeObj.path) {
+      makeNodesCusp(activeObj, canvas);
+    }
+  });
+}
+
+if (btnNodeSmooth) {
+  btnNodeSmooth.addEventListener('click', () => {
+    const activeObj = canvas.getActiveObject();
+    if (activeObj && activeObj.path) {
+      makeNodesSmooth(activeObj, canvas);
+    }
+  });
+}
+
+if (btnNodeAutoSmooth) {
+  btnNodeAutoSmooth.addEventListener('click', () => {
+    const activeObj = canvas.getActiveObject();
+    if (activeObj && activeObj.path) {
+      makeNodesAutoSmooth(activeObj, canvas);
+    }
   });
 }
 

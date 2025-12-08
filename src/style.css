@@ -334,78 +334,84 @@ canvas{touch-action:none}
   box-shadow: 0 0 0 2px rgba(26, 115, 232, 0.1);
 }
 
-/* Node Edit Toolbar Styles */
+/* Node Edit Toolbar Styles - Positioned next to leftToolbar, over canvas */
 .node-toolbar {
   position: absolute;
-  top: 8px;
-  left: 70px;
+  top: 50px;
+  left: 64px; /* Position next to leftToolbar (56px width + 8px gap) */
+  right: calc(var(--panel-w) + 8px); /* Don't overlap with aside panel */
+  height: 36px;
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 6px 12px;
-  background: linear-gradient(180deg, #ffffff, #f8f9fa);
-  border: 1px solid #d0d4da;
-  border-radius: 8px;
-  box-shadow: 0 2px 8px rgba(0,0,0,0.12);
-  z-index: 100;
-  transition: opacity 0.2s ease, transform 0.2s ease;
+  gap: 4px;
+  padding: 0 8px;
+  background: #fff;
+  border: 1px solid #e6e9ed;
+  border-radius: 6px;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.1);
+  z-index: 4; /* Below #panel (10) and .fill-stroke-panel (5) */
 }
 
 .node-toolbar.hidden {
   display: none;
 }
 
+/* When fill-stroke panel is open, shrink node toolbar further */
+.fill-stroke-panel.active ~ .node-toolbar,
+body:has(.fill-stroke-panel.active) .node-toolbar {
+  right: calc(var(--panel-w) + 368px); /* panel-w + fill-stroke panel width + gap */
+}
+
 .node-toolbar .toolbar-label {
-  font-size: 13px;
-  font-weight: 600;
-  color: #334155;
-  padding-right: 4px;
+  font-size: 12px;
+  font-weight: 500;
+  color: #333;
+  padding: 0 6px;
 }
 
 .node-toolbar .toolbar-sep {
   width: 1px;
-  height: 24px;
-  background: #e6e9ed;
+  height: 20px;
+  background: #c0c0c0;
   margin: 0 4px;
 }
 
 .node-tool-btn {
   display: flex;
   align-items: center;
-  gap: 4px;
-  padding: 6px 12px;
-  border: 1px solid #d0d4da;
-  border-radius: 6px;
-  background: #ffffff;
-  font-size: 13px;
-  font-weight: 500;
-  color: #334155;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 4px;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  background: transparent;
   cursor: pointer;
-  transition: background 0.15s, border-color 0.15s, box-shadow 0.15s;
+  transition: background 0.1s, border-color 0.1s;
 }
 
 .node-tool-btn:hover {
-  background: #f3f4f6;
-  border-color: #c0c8d4;
+  background: #e0e0e0;
+  border-color: #b0b0b0;
 }
 
 .node-tool-btn:active {
-  background: #e5e7eb;
-  transform: translateY(1px);
+  background: #d0d0d0;
 }
 
 .node-tool-btn.active {
-  background: #e9f0ff;
-  border-color: #1a73e8;
-  color: #1a73e8;
+  background: #cce4ff;
+  border-color: #66a3e0;
 }
 
 .node-tool-btn:disabled {
-  opacity: 0.5;
+  opacity: 0.4;
   cursor: not-allowed;
 }
 
 .node-tool-btn img {
-  width: 16px;
-  height: 16px;
+  width: 20px;
+  height: 20px;
+  pointer-events: none;
+}
 }
