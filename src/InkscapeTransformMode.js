@@ -702,6 +702,24 @@ function enterNodeEditMode(obj, canvas) {
   // Store original controls
   originalControls.set(targetObj, { ...targetObj.controls });
   
+  // Store original bounds for restoration later
+  targetObj._nodeEditOriginalBounds = {
+    left: targetObj.left,
+    top: targetObj.top,
+    width: targetObj.width,
+    height: targetObj.height,
+    pathOffset: { ...targetObj.pathOffset }
+  };
+  
+  // Expand bounding box to cover entire canvas to prevent clipping during editing
+  // This ensures nodes can be dragged anywhere without the path being clipped
+  const canvasWidth = canvas.width || 2000;
+  const canvasHeight = canvas.height || 2000;
+  targetObj.set({
+    width: canvasWidth * 2,
+    height: canvasHeight * 2
+  });
+  
   // Set mode
   objectModes.set(targetObj, MODE.NODE_EDIT);
   
@@ -742,9 +760,12 @@ function enterNodeEditMode(obj, canvas) {
 function exitNodeEditMode(obj, canvas) {
   if (!obj) return;
   
+  // Clean up stored original bounds
+  delete obj._nodeEditOriginalBounds;
+  
   // Recalculate bounding box for paths so handles stay within visible area
   if (obj.path && Array.isArray(obj.path)) {
-    recalculatePathBoundingBox(obj);
+    recalculatePathBoundingBoxFinal(obj);
   } else if (obj.points && Array.isArray(obj.points)) {
     recalculateBoundingBox(obj);
   }
@@ -1233,6 +1254,77 @@ function recalculatePathBoundingBox(path) {
   path.set({
     left: path.left + deltaX,
     top: path.top + deltaY,
+    width: width,
+    height: height
+  });
+  
+  path.setCoords();
+  path.dirty = true;
+}
+
+/**
+ * Recalculate bounding box for a Path when exiting node edit mode
+ * This version doesn't cause position jumps because it uses the path's
+ * current visual position as reference
+ * @param {fabric.Path} path - The path to update
+ */
+function recalculatePathBoundingBoxFinal(path) {
+  if (!path || !path.path || path.path.length === 0) return;
+  
+  // Get all points from path commands to find actual bounds
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  
+  for (const cmd of path.path) {
+    const command = cmd[0];
+    switch (command) {
+      case 'M':
+      case 'L':
+        minX = Math.min(minX, cmd[1]);
+        minY = Math.min(minY, cmd[2]);
+        maxX = Math.max(maxX, cmd[1]);
+        maxY = Math.max(maxY, cmd[2]);
+        break;
+      case 'C':
+        // Include control points and endpoint in bounding box
+        minX = Math.min(minX, cmd[1], cmd[3], cmd[5]);
+        minY = Math.min(minY, cmd[2], cmd[4], cmd[6]);
+        maxX = Math.max(maxX, cmd[1], cmd[3], cmd[5]);
+        maxY = Math.max(maxY, cmd[2], cmd[4], cmd[6]);
+        break;
+      case 'Q':
+        minX = Math.min(minX, cmd[1], cmd[3]);
+        minY = Math.min(minY, cmd[2], cmd[4]);
+        maxX = Math.max(maxX, cmd[1], cmd[3]);
+        maxY = Math.max(maxY, cmd[2], cmd[4]);
+        break;
+    }
+  }
+  
+  const width = maxX - minX;
+  const height = maxY - minY;
+  
+  // New pathOffset is the center of the actual path bounds
+  const newPathOffset = {
+    x: minX + width / 2,
+    y: minY + height / 2
+  };
+  
+  // The path is rendered at: left + (pointX - pathOffset.x)
+  // We want the visual position to stay the same
+  // Currently with old pathOffset, a point at minX renders at: left + (minX - oldPathOffset.x)
+  // With new pathOffset, to render at same position: newLeft + (minX - newPathOffset.x) = left + (minX - oldPathOffset.x)
+  // newLeft = left + (minX - oldPathOffset.x) - (minX - newPathOffset.x)
+  // newLeft = left + newPathOffset.x - oldPathOffset.x
+  
+  const oldPathOffset = path.pathOffset;
+  const newLeft = path.left + (newPathOffset.x - oldPathOffset.x);
+  const newTop = path.top + (newPathOffset.y - oldPathOffset.y);
+  
+  // Update pathOffset and dimensions
+  path.pathOffset = newPathOffset;
+  path.set({
+    left: newLeft,
+    top: newTop,
     width: width,
     height: height
   });
