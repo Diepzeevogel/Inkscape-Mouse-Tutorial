@@ -3,6 +3,7 @@ import { installWelcomeOverlay, createSelectOverlayButton } from './overlay.js';
 import { startTutorial, startTutorialDirect, startLesson2, startLesson3, startLesson4, startLesson5 } from './tutorial.js';
 import { startLesson6, cleanupLesson6 } from './Lesson6.js';
 import { shapeDrawingController } from './ShapeDrawingController.js';
+import { penToolController } from './PenToolController.js';
 
 // Device detection - check for desktop/laptop with mouse
 function isDesktopWithMouse() {
@@ -358,6 +359,7 @@ if (rectTool) {
     
     // Enable rectangle drawing mode
     shapeDrawingController.enable('rect');
+    penToolController.disable();
   });
 }
 
@@ -369,14 +371,30 @@ if (ellipseTool) {
     
     // Enable ellipse drawing mode
     shapeDrawingController.enable('ellipse');
+    penToolController.disable();
   });
 }
 
-// When select tool is clicked, disable shape drawing
+// Pen tool handler
+const penTool = document.getElementById('tool-pen');
+if (penTool) {
+  penTool.addEventListener('click', () => {
+    // Deactivate other tools
+    document.querySelectorAll('.tool-btn').forEach(b => b.classList.remove('active'));
+    penTool.classList.add('active');
+    
+    // Disable shape drawing and enable pen tool
+    shapeDrawingController.disable();
+    penToolController.enable();
+  });
+}
+
+// When select tool is clicked, disable shape drawing and pen tool
 if (selectTool) {
   const originalSelectHandler = selectTool.onclick;
   selectTool.addEventListener('click', () => {
     shapeDrawingController.disable();
+    penToolController.disable();
   }, { capture: true });
 }
 

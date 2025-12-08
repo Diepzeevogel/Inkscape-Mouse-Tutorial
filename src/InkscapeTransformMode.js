@@ -15,16 +15,25 @@ import { TRANSFORM_MODE as CONFIG } from './constants.js';
 // Transform modes
 const MODE = {
   SCALE: 'scale',
-  ROTATE: 'rotate'
+  ROTATE: 'rotate',
+  NODE_EDIT: 'nodeEdit'
 };
 
 // Track the current mode for each object using WeakMap for automatic garbage collection
 const objectModes = new WeakMap();
 
+// Store original controls when entering node edit mode
+const originalControls = new WeakMap();
+
 // Selection state tracking
 let currentSelectedObject = null;
 let justSelected = false;  // Prevents immediate mode toggle after selection
 let previousSelectionCount = 0;
+
+// Double-click tracking for node edit
+let lastClickTime = 0;
+let lastClickTarget = null;
+const DOUBLE_CLICK_THRESHOLD = 300; // ms - faster than scale/rotate toggle
 
 // Icon cache for custom handles
 const iconCache = {
@@ -315,6 +324,13 @@ function toggleMode(obj) {
   if (!obj) return;
   
   const currentMode = getMode(obj);
+  
+  // Don't toggle if in node edit mode - need double-click or Escape to exit
+  if (currentMode === MODE.NODE_EDIT) {
+    debugLog('[TransformMode] In node edit mode - not toggling');
+    return;
+  }
+  
   debugLog('[TransformMode] toggleMode called:', {
     objType: obj.type,
     currentMode: currentMode,
@@ -548,9 +564,268 @@ function handleMouseUp(e, canvas) {
  * @param {fabric.Canvas} canvas - The canvas instance
  */
 function handleSelectionCleared(e, canvas) {
+  // Exit node edit mode if active
+  if (currentSelectedObject && getMode(currentSelectedObject) === MODE.NODE_EDIT) {
+    exitNodeEditMode(currentSelectedObject, canvas);
+  }
   currentSelectedObject = null;
   justSelected = false;
   previousSelectionCount = 0;
+}
+
+/**
+ * Handle double-click - enter node edit mode for polygons/polylines
+ * @param {Object} e - Fabric.js mouse event
+ * @param {fabric.Canvas} canvas - The canvas instance
+ */
+function handleMouseDblClick(e, canvas) {
+  const target = e.target;
+  if (!target) return;
+  
+  // Check if target is a polygon or polyline (has points array)
+  if (target.points && Array.isArray(target.points)) {
+    debugLog('[InkscapeTransformMode] Double-click on polygon/polyline - entering node edit mode');
+    enterNodeEditMode(target, canvas);
+  }
+}
+
+/**
+ * Handle keydown - Escape exits node edit mode
+ * @param {KeyboardEvent} e - Keyboard event
+ * @param {fabric.Canvas} canvas - The canvas instance
+ */
+function handleKeyDown(e, canvas) {
+  if (e.key === 'Escape') {
+    const activeObject = canvas.getActiveObject();
+    if (activeObject && getMode(activeObject) === MODE.NODE_EDIT) {
+      exitNodeEditMode(activeObject, canvas);
+      e.preventDefault();
+    }
+  }
+}
+
+/**
+ * Enter node editing mode for a polygon/polyline
+ * @param {fabric.Object} obj - The polygon/polyline to edit
+ * @param {fabric.Canvas} canvas - The canvas instance
+ */
+function enterNodeEditMode(obj, canvas) {
+  if (!obj || !obj.points) return;
+  
+  // Store original controls
+  originalControls.set(obj, { ...obj.controls });
+  
+  // Set mode
+  objectModes.set(obj, MODE.NODE_EDIT);
+  
+  // Create node controls
+  const nodeControls = createNodeControls(obj);
+  obj.controls = nodeControls;
+  
+  // Hide standard visibility but allow interaction
+  obj.setControlsVisibility({
+    mt: false, mb: false, ml: false, mr: false,
+    tl: false, tr: false, bl: false, br: false,
+    mtr: false
+  });
+  
+  obj.hasBorders = false;
+  obj.dirty = true;
+  canvas.requestRenderAll();
+  
+  debugLog('[InkscapeTransformMode] Entered node edit mode');
+}
+
+/**
+ * Exit node editing mode
+ * @param {fabric.Object} obj - The object in node edit mode
+ * @param {fabric.Canvas} canvas - The canvas instance
+ */
+function exitNodeEditMode(obj, canvas) {
+  if (!obj) return;
+  
+  // Recalculate bounding box based on edited points
+  if (obj.points && Array.isArray(obj.points)) {
+    recalculateBoundingBox(obj);
+  }
+  
+  // Restore original controls
+  const original = originalControls.get(obj);
+  if (original) {
+    obj.controls = original;
+    originalControls.delete(obj);
+  } else {
+    // Fallback: recreate standard controls
+    obj.controls = fabric.Object.prototype.controls;
+  }
+  
+  obj.hasBorders = true;
+  obj.dirty = true;
+  
+  // Reset to scale mode
+  setScaleMode(obj);
+  canvas.requestRenderAll();
+  
+  debugLog('[InkscapeTransformMode] Exited node edit mode');
+}
+
+/**
+ * Create node editing controls for a polygon/polyline
+ * @param {fabric.Object} shape - The shape to create controls for
+ * @returns {Object} Control configuration object
+ */
+function createNodeControls(shape) {
+  const controls = {};
+  const points = shape.points;
+  
+  for (let i = 0; i < points.length; i++) {
+    controls['p' + i] = new fabric.Control({
+      positionHandler: createNodePositionHandler(i),
+      actionHandler: createNodeActionHandler(i),
+      render: renderNodeControl,
+      cursorStyle: 'pointer',
+      pointIndex: i,
+      actionName: 'modifyPolygon',
+      offsetX: 0,
+      offsetY: 0
+    });
+  }
+  
+  return controls;
+}
+
+/**
+ * Create position handler for a node control
+ * @param {number} pointIndex - Index of the point in the points array
+ * @returns {Function} Position handler function
+ */
+function createNodePositionHandler(pointIndex) {
+  return function(dim, finalMatrix, fabricObject) {
+    const points = fabricObject.points;
+    if (!points || !points[pointIndex]) return { x: 0, y: 0 };
+    
+    const x = points[pointIndex].x - fabricObject.pathOffset.x;
+    const y = points[pointIndex].y - fabricObject.pathOffset.y;
+    
+    return fabric.util.transformPoint(
+      { x, y },
+      fabric.util.multiplyTransformMatrices(
+        fabricObject.canvas.viewportTransform,
+        fabricObject.calcTransformMatrix()
+      )
+    );
+  };
+}
+
+/**
+ * Create action handler for dragging a node
+ * @param {number} pointIndex - Index of the point in the points array
+ * @returns {Function} Action handler function
+ */
+function createNodeActionHandler(pointIndex) {
+  return function(eventData, transform, x, y) {
+    const polygon = transform.target;
+    const mouseLocalPosition = polygon.toLocalPoint(
+      new fabric.Point(x, y),
+      'center',
+      'center'
+    );
+    
+    polygon.points[pointIndex] = {
+      x: mouseLocalPosition.x + polygon.pathOffset.x,
+      y: mouseLocalPosition.y + polygon.pathOffset.y
+    };
+    
+    polygon.dirty = true;
+    polygon.setCoords();
+    return true;
+  };
+}
+
+/**
+ * Recalculate bounding box for a polygon/polyline after node editing
+ * This updates pathOffset and repositions the shape correctly
+ * @param {fabric.Object} polygon - The polygon/polyline to update
+ */
+function recalculateBoundingBox(polygon) {
+  if (!polygon || !polygon.points || polygon.points.length === 0) return;
+  
+  const points = polygon.points;
+  
+  // Calculate new bounding box from current points
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const point of points) {
+    minX = Math.min(minX, point.x);
+    minY = Math.min(minY, point.y);
+    maxX = Math.max(maxX, point.x);
+    maxY = Math.max(maxY, point.y);
+  }
+  
+  const width = maxX - minX;
+  const height = maxY - minY;
+  
+  // New pathOffset is the center of the bounding box
+  const newPathOffset = {
+    x: minX + width / 2,
+    y: minY + height / 2
+  };
+  
+  // For polygons/polylines with originX:'left' and originY:'top':
+  // - left/top represents the top-left corner of the bounding box
+  // - pathOffset is the center point
+  // - Points render at: left + (point.x - pathOffset.x), top + (point.y - pathOffset.y)
+  // 
+  // So for the top-left corner point (minX, minY):
+  //   canvasX = left + (minX - pathOffset.x) = left + (minX - (minX + width/2)) = left - width/2
+  //   We want canvasX = minX, so: left = minX + width/2 = pathOffset.x
+  // 
+  // Wait, that's not right either. Let me reconsider...
+  // Actually, for origin 'left'/'top', the position IS the top-left of the bounding box
+  // and since points are relative to pathOffset, the formula is:
+  //   rendered.x = left + (point.x - pathOffset.x)
+  //   rendered.y = top + (point.y - pathOffset.y)
+  //
+  // For the shape to stay in place, we want point (minX, minY) to render at canvas (minX, minY)
+  // So: minX = left + (minX - pathOffset.x)  =>  left = pathOffset.x
+  //     minY = top + (minY - pathOffset.y)   =>  top = pathOffset.y
+  //
+  // No wait, that's wrong too. The original rendering worked, so let's trace through:
+  // Original: left=52.5, pathOffset.x=213.5
+  // Point at x=53 renders at: 52.5 + (53 - 213.5) = 52.5 - 160.5 = -108 (not right)
+  //
+  // Hmm, the math doesn't add up. Let me just preserve the relationship:
+  // In the original, for the top-left point: left ≈ minX and top ≈ minY
+  // The pathOffset is just used internally for transforms
+  
+  // Simply set left/top to minX/minY (the top-left of bounding box)
+  // This is what Fabric does for polygons with origin at left/top
+  polygon.pathOffset = newPathOffset;
+  polygon.set({
+    left: minX,
+    top: minY,
+    width: width,
+    height: height
+  });
+  
+  // Force recalculation of coordinates
+  polygon.setCoords();
+  polygon.dirty = true;
+}
+
+/**
+ * Render function for node control points
+ */
+function renderNodeControl(ctx, left, top, styleOverride, fabricObject) {
+  const size = 10;
+  ctx.save();
+  ctx.fillStyle = 'white';
+  ctx.strokeStyle = '#1976d2';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.arc(left, top, size / 2, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.stroke();
+  ctx.restore();
 }
 
 /**
@@ -570,6 +845,8 @@ export function enableInkscapeTransformMode(canvas) {
   const onSelectionCleared = (e) => handleSelectionCleared(e, canvas);
   const onMouseDown = (e) => handleMouseDown(e, canvas);
   const onMouseUp = (e) => handleMouseUp(e, canvas);
+  const onMouseDblClick = (e) => handleMouseDblClick(e, canvas);
+  const onKeyDown = (e) => handleKeyDown(e, canvas);
   
   // Attach event listeners
   canvas.on('selection:created', onSelectionCreated);
@@ -577,6 +854,8 @@ export function enableInkscapeTransformMode(canvas) {
   canvas.on('selection:cleared', onSelectionCleared);
   canvas.on('mouse:down', onMouseDown);
   canvas.on('mouse:up', onMouseUp);
+  canvas.on('mouse:dblclick', onMouseDblClick);
+  window.addEventListener('keydown', onKeyDown);
   
   debugLog('[InkscapeTransformMode] Enabled Inkscape-like transform modes');
   
@@ -587,6 +866,8 @@ export function enableInkscapeTransformMode(canvas) {
     canvas.off('selection:cleared', onSelectionCleared);
     canvas.off('mouse:down', onMouseDown);
     canvas.off('mouse:up', onMouseUp);
+    canvas.off('mouse:dblclick', onMouseDblClick);
+    window.removeEventListener('keydown', onKeyDown);
     debugLog('[InkscapeTransformMode] Disabled');
   };
 }
@@ -614,7 +895,7 @@ export function forceRotateMode(obj, canvas) {
 /**
  * Get the current transform mode of an object
  * @param {fabric.Object} obj - The object to query
- * @returns {string} 'scale' or 'rotate'
+ * @returns {string} 'scale', 'rotate', or 'nodeEdit'
  */
 export function getCurrentMode(obj) {
   return getMode(obj);

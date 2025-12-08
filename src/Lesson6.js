@@ -13,6 +13,7 @@ import { ASSETS, SVG_IDS, LESSON_FEATURES } from './constants.js';
 import { copyPasteController } from './CopyPasteController.js';
 import { undoRedoController } from './UndoRedoController.js';
 import { shapeDrawingController } from './ShapeDrawingController.js';
+import { penToolController } from './PenToolController.js';
 
 class Lesson6State {
   constructor() {
@@ -253,6 +254,7 @@ export async function startLesson6() {
     if (LESSON_FEATURES[6]?.SHAPE_TOOLS) {
       const rectTool = document.getElementById('tool-rect');
       const ellipseTool = document.getElementById('tool-ellipse');
+      const penTool = document.getElementById('tool-pen');
       if (rectTool) {
         rectTool.disabled = false;
         rectTool.removeAttribute('aria-disabled');
@@ -261,8 +263,13 @@ export async function startLesson6() {
         ellipseTool.disabled = false;
         ellipseTool.removeAttribute('aria-disabled');
       }
-      // Set FillStrokePanel reference so shapes use the current colors
+      if (penTool) {
+        penTool.disabled = false;
+        penTool.removeAttribute('aria-disabled');
+      }
+      // Set FillStrokePanel reference so shapes and pen tool use the current colors
       shapeDrawingController.setFillStrokePanel(lesson6State.fillStrokePanel);
+      penToolController.setFillStrokePanel(lesson6State.fillStrokePanel);
       console.log('[Lesson6] Shape tools enabled');
     }
 
@@ -300,6 +307,7 @@ export function cleanupLesson6() {
   // Disable shape tools
   const rectTool = document.getElementById('tool-rect');
   const ellipseTool = document.getElementById('tool-ellipse');
+  const penTool = document.getElementById('tool-pen');
   if (rectTool) {
     rectTool.disabled = true;
     rectTool.setAttribute('aria-disabled', 'true');
@@ -308,6 +316,11 @@ export function cleanupLesson6() {
     ellipseTool.disabled = true;
     ellipseTool.setAttribute('aria-disabled', 'true');
   }
+  if (penTool) {
+    penTool.disabled = true;
+    penTool.setAttribute('aria-disabled', 'true');
+  }
+  penToolController.disable();
 
   // Clear canvas event listeners
   canvas.off('selection:created');
