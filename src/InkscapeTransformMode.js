@@ -574,7 +574,7 @@ function handleSelectionCleared(e, canvas) {
 }
 
 /**
- * Handle double-click - enter node edit mode for polygons/polylines
+ * Handle double-click - enter node edit mode for polygons/polylines/paths
  * @param {Object} e - Fabric.js mouse event
  * @param {fabric.Canvas} canvas - The canvas instance
  */
@@ -582,9 +582,12 @@ function handleMouseDblClick(e, canvas) {
   const target = e.target;
   if (!target) return;
   
-  // Check if target is a polygon or polyline (has points array)
+  // Check if target is a polygon/polyline (has points array) or a path (has path array)
   if (target.points && Array.isArray(target.points)) {
     debugLog('[InkscapeTransformMode] Double-click on polygon/polyline - entering node edit mode');
+    enterNodeEditMode(target, canvas);
+  } else if (target.path && Array.isArray(target.path)) {
+    debugLog('[InkscapeTransformMode] Double-click on path - entering node edit mode');
     enterNodeEditMode(target, canvas);
   }
 }
@@ -605,32 +608,116 @@ function handleKeyDown(e, canvas) {
 }
 
 /**
+ * Convert a Polygon/Polyline to a Path object
+ * This allows for future bezier curve editing
+ * @param {fabric.Object} polygon - The polygon/polyline to convert
+ * @param {fabric.Canvas} canvas - The canvas instance
+ * @returns {fabric.Path} The converted path object
+ */
+function convertPolygonToPath(polygon, canvas) {
+  if (!polygon || !polygon.points || polygon.points.length === 0) return null;
+  
+  const points = polygon.points;
+  const isClosed = polygon.type === 'polygon';
+  
+  // Build path commands array
+  // Format: ['M', x, y], ['L', x, y], ..., ['Z'] (if closed)
+  const pathData = [];
+  
+  // First point is a Move command
+  pathData.push(['M', points[0].x, points[0].y]);
+  
+  // Subsequent points are Line commands
+  for (let i = 1; i < points.length; i++) {
+    pathData.push(['L', points[i].x, points[i].y]);
+  }
+  
+  // Close path for polygons
+  if (isClosed) {
+    pathData.push(['Z']);
+  }
+  
+  // Create new fabric.Path
+  const path = new fabric.Path(pathData, {
+    fill: polygon.fill,
+    stroke: polygon.stroke,
+    strokeWidth: polygon.strokeWidth,
+    strokeLineCap: polygon.strokeLineCap,
+    strokeLineJoin: polygon.strokeLineJoin,
+    opacity: polygon.opacity,
+    left: polygon.left,
+    top: polygon.top,
+    originX: polygon.originX,
+    originY: polygon.originY,
+    // Copy custom properties
+    _isConvertedPath: true,
+    _originalType: polygon.type
+  });
+  
+  debugLog('[InkscapeTransformMode] Converted polygon to path:', {
+    originalType: polygon.type,
+    pointCount: points.length,
+    pathCommands: pathData.length,
+    isClosed: isClosed
+  });
+  
+  return path;
+}
+
+/**
  * Enter node editing mode for a polygon/polyline
+ * Converts polygon to path for future bezier support
  * @param {fabric.Object} obj - The polygon/polyline to edit
  * @param {fabric.Canvas} canvas - The canvas instance
  */
 function enterNodeEditMode(obj, canvas) {
-  if (!obj || !obj.points) return;
+  if (!obj) return;
+  
+  // Handle both polygons/polylines (with points) and paths
+  let targetObj = obj;
+  
+  // Convert polygon/polyline to path for bezier support
+  if (obj.points && Array.isArray(obj.points)) {
+    debugLog('[InkscapeTransformMode] Converting polygon to path for node editing');
+    
+    const path = convertPolygonToPath(obj, canvas);
+    if (!path) {
+      debugLog('[InkscapeTransformMode] Failed to convert polygon to path');
+      return;
+    }
+    
+    // Replace polygon with path on canvas
+    canvas.remove(obj);
+    canvas.add(path);
+    canvas.setActiveObject(path);
+    targetObj = path;
+    
+    debugLog('[InkscapeTransformMode] Polygon replaced with path');
+  } else if (!obj.path) {
+    // Not a polygon and not a path - can't node edit
+    debugLog('[InkscapeTransformMode] Object has no points or path - cannot enter node edit mode');
+    return;
+  }
   
   // Store original controls
-  originalControls.set(obj, { ...obj.controls });
+  originalControls.set(targetObj, { ...targetObj.controls });
   
   // Set mode
-  objectModes.set(obj, MODE.NODE_EDIT);
+  objectModes.set(targetObj, MODE.NODE_EDIT);
   
-  // Create node controls
-  const nodeControls = createNodeControls(obj);
-  obj.controls = nodeControls;
+  // Create node controls for path
+  const nodeControls = createPathNodeControls(targetObj);
+  targetObj.controls = nodeControls;
   
   // Hide standard visibility but allow interaction
-  obj.setControlsVisibility({
+  targetObj.setControlsVisibility({
     mt: false, mb: false, ml: false, mr: false,
     tl: false, tr: false, bl: false, br: false,
     mtr: false
   });
   
-  obj.hasBorders = false;
-  obj.dirty = true;
+  targetObj.hasBorders = false;
+  targetObj.dirty = true;
   canvas.requestRenderAll();
   
   debugLog('[InkscapeTransformMode] Entered node edit mode');
@@ -644,8 +731,11 @@ function enterNodeEditMode(obj, canvas) {
 function exitNodeEditMode(obj, canvas) {
   if (!obj) return;
   
-  // Recalculate bounding box based on edited points
-  if (obj.points && Array.isArray(obj.points)) {
+  // Recalculate bounding box based on path data
+  if (obj.path && Array.isArray(obj.path)) {
+    recalculatePathBoundingBox(obj);
+  } else if (obj.points && Array.isArray(obj.points)) {
+    // Fallback for old polygon editing (shouldn't happen anymore)
     recalculateBoundingBox(obj);
   }
   
@@ -670,7 +760,435 @@ function exitNodeEditMode(obj, canvas) {
 }
 
 /**
- * Create node editing controls for a polygon/polyline
+ * Get anchor points from a path (M, L, C, Q endpoints - not control points)
+ * @param {Array} pathData - The path data array
+ * @returns {Array} Array of {commandIndex, x, y, command} for each anchor
+ */
+function getPathAnchors(pathData) {
+  const anchors = [];
+  
+  for (let i = 0; i < pathData.length; i++) {
+    const cmd = pathData[i];
+    const command = cmd[0];
+    
+    switch (command) {
+      case 'M': // Move to
+      case 'L': // Line to
+        anchors.push({
+          commandIndex: i,
+          x: cmd[1],
+          y: cmd[2],
+          command: command
+        });
+        break;
+      case 'C': // Cubic bezier - endpoint is last two values
+        anchors.push({
+          commandIndex: i,
+          x: cmd[5],  // End point x
+          y: cmd[6],  // End point y
+          command: command,
+          // Also store control points for later
+          cp1x: cmd[1], cp1y: cmd[2],
+          cp2x: cmd[3], cp2y: cmd[4]
+        });
+        break;
+      case 'Q': // Quadratic bezier - endpoint is last two values
+        anchors.push({
+          commandIndex: i,
+          x: cmd[3],  // End point x
+          y: cmd[4],  // End point y
+          command: command,
+          cpx: cmd[1], cpy: cmd[2]
+        });
+        break;
+      case 'Z': // Close path - no anchor point
+        break;
+    }
+  }
+  
+  return anchors;
+}
+
+/**
+ * Create node editing controls for a Path object
+ * Includes anchor points AND bezier control handles
+ * @param {fabric.Path} path - The path to create controls for
+ * @returns {Object} Control configuration object
+ */
+function createPathNodeControls(path) {
+  const controls = {};
+  const pathData = path.path;
+  
+  if (!pathData || !Array.isArray(pathData)) return controls;
+  
+  // Get all anchor points from path
+  const anchors = getPathAnchors(pathData);
+  
+  debugLog('[InkscapeTransformMode] Creating path node controls:', {
+    pathCommands: pathData.length,
+    anchorCount: anchors.length
+  });
+  
+  // Create control for each anchor point
+  for (let i = 0; i < anchors.length; i++) {
+    const anchor = anchors[i];
+    controls['p' + i] = new fabric.Control({
+      positionHandler: createPathNodePositionHandler(anchor.commandIndex, anchor.command),
+      actionHandler: createPathNodeActionHandler(anchor.commandIndex, anchor.command),
+      render: renderNodeControl,
+      cursorStyle: 'pointer',
+      anchorIndex: i,
+      commandIndex: anchor.commandIndex,
+      actionName: 'modifyPath',
+      offsetX: 0,
+      offsetY: 0
+    });
+    
+    // For cubic bezier commands, also create controls for control points
+    if (anchor.command === 'C') {
+      // Control point 1 (cp1)
+      controls['cp1_' + i] = new fabric.Control({
+        positionHandler: createBezierHandlePositionHandler(anchor.commandIndex, 'cp1'),
+        actionHandler: createBezierHandleActionHandler(anchor.commandIndex, 'cp1'),
+        render: renderBezierHandleControl,
+        cursorStyle: 'crosshair',
+        anchorIndex: i,
+        commandIndex: anchor.commandIndex,
+        handleType: 'cp1',
+        actionName: 'modifyBezierHandle',
+        offsetX: 0,
+        offsetY: 0
+      });
+      
+      // Control point 2 (cp2)
+      controls['cp2_' + i] = new fabric.Control({
+        positionHandler: createBezierHandlePositionHandler(anchor.commandIndex, 'cp2'),
+        actionHandler: createBezierHandleActionHandler(anchor.commandIndex, 'cp2'),
+        render: renderBezierHandleControl,
+        cursorStyle: 'crosshair',
+        anchorIndex: i,
+        commandIndex: anchor.commandIndex,
+        handleType: 'cp2',
+        actionName: 'modifyBezierHandle',
+        offsetX: 0,
+        offsetY: 0
+      });
+    }
+  }
+  
+  return controls;
+}
+
+/**
+ * Create position handler for a bezier control handle
+ * @param {number} commandIndex - Index of the command in the path array
+ * @param {string} handleType - 'cp1' or 'cp2'
+ * @returns {Function} Position handler function
+ */
+function createBezierHandlePositionHandler(commandIndex, handleType) {
+  return function(dim, finalMatrix, fabricObject) {
+    const pathData = fabricObject.path;
+    if (!pathData || !pathData[commandIndex]) return { x: 0, y: 0 };
+    
+    const cmd = pathData[commandIndex];
+    if (cmd[0] !== 'C') return { x: 0, y: 0 };
+    
+    let x, y;
+    if (handleType === 'cp1') {
+      x = cmd[1];
+      y = cmd[2];
+    } else { // cp2
+      x = cmd[3];
+      y = cmd[4];
+    }
+    
+    // Adjust for pathOffset
+    x = x - fabricObject.pathOffset.x;
+    y = y - fabricObject.pathOffset.y;
+    
+    return fabric.util.transformPoint(
+      { x, y },
+      fabric.util.multiplyTransformMatrices(
+        fabricObject.canvas.viewportTransform,
+        fabricObject.calcTransformMatrix()
+      )
+    );
+  };
+}
+
+/**
+ * Create action handler for dragging a bezier control handle
+ * @param {number} commandIndex - Index of the command in the path array
+ * @param {string} handleType - 'cp1' or 'cp2'
+ * @returns {Function} Action handler function
+ */
+function createBezierHandleActionHandler(commandIndex, handleType) {
+  return function(eventData, transform, x, y) {
+    const path = transform.target;
+    const mouseLocalPosition = path.toLocalPoint(
+      new fabric.Point(x, y),
+      'center',
+      'center'
+    );
+    
+    const newX = mouseLocalPosition.x + path.pathOffset.x;
+    const newY = mouseLocalPosition.y + path.pathOffset.y;
+    
+    const cmd = path.path[commandIndex];
+    if (cmd[0] !== 'C') return false;
+    
+    if (handleType === 'cp1') {
+      cmd[1] = newX;
+      cmd[2] = newY;
+    } else { // cp2
+      cmd[3] = newX;
+      cmd[4] = newY;
+    }
+    
+    path.dirty = true;
+    path.setCoords();
+    return true;
+  };
+}
+
+/**
+ * Render function for bezier control handle points (diamonds)
+ */
+function renderBezierHandleControl(ctx, left, top, styleOverride, fabricObject) {
+  const size = 8;
+  ctx.save();
+  
+  // Draw line from control point to its related anchor point
+  // This creates the "handle arm" visualization
+  const control = this;
+  const pathData = fabricObject.path;
+  
+  if (pathData && control.commandIndex !== undefined) {
+    const cmd = pathData[control.commandIndex];
+    if (cmd && cmd[0] === 'C') {
+      // Get the previous anchor point for cp1, or the endpoint for cp2
+      let anchorX, anchorY;
+      
+      if (control.handleType === 'cp2') {
+        // cp2 connects to the curve's endpoint
+        anchorX = cmd[5] - fabricObject.pathOffset.x;
+        anchorY = cmd[6] - fabricObject.pathOffset.y;
+      } else {
+        // cp1 connects to the previous point
+        // Find the previous anchor
+        const anchors = getPathAnchors(pathData);
+        for (let i = 0; i < anchors.length; i++) {
+          if (anchors[i].commandIndex === control.commandIndex && i > 0) {
+            const prevAnchor = anchors[i - 1];
+            anchorX = prevAnchor.x - fabricObject.pathOffset.x;
+            anchorY = prevAnchor.y - fabricObject.pathOffset.y;
+            break;
+          }
+        }
+      }
+      
+      if (anchorX !== undefined) {
+        // Transform anchor point to screen coordinates
+        const anchorScreen = fabric.util.transformPoint(
+          { x: anchorX, y: anchorY },
+          fabric.util.multiplyTransformMatrices(
+            fabricObject.canvas.viewportTransform,
+            fabricObject.calcTransformMatrix()
+          )
+        );
+        
+        // Draw handle line
+        ctx.strokeStyle = '#1976d2';
+        ctx.lineWidth = 1;
+        ctx.setLineDash([4, 4]);
+        ctx.beginPath();
+        ctx.moveTo(anchorScreen.x, anchorScreen.y);
+        ctx.lineTo(left, top);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+    }
+  }
+  
+  // Draw diamond shape for control handle
+  ctx.fillStyle = '#1976d2';
+  ctx.strokeStyle = 'white';
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(left, top - size/2);        // top
+  ctx.lineTo(left + size/2, top);        // right
+  ctx.lineTo(left, top + size/2);        // bottom
+  ctx.lineTo(left - size/2, top);        // left
+  ctx.closePath();
+  ctx.fill();
+  ctx.stroke();
+  ctx.restore();
+}
+
+/**
+ * Create position handler for a path node control
+ * @param {number} commandIndex - Index of the command in the path array
+ * @param {string} command - The path command type (M, L, C, Q)
+ * @returns {Function} Position handler function
+ */
+function createPathNodePositionHandler(commandIndex, command) {
+  return function(dim, finalMatrix, fabricObject) {
+    const pathData = fabricObject.path;
+    if (!pathData || !pathData[commandIndex]) return { x: 0, y: 0 };
+    
+    const cmd = pathData[commandIndex];
+    let x, y;
+    
+    // Get endpoint coordinates based on command type
+    switch (command) {
+      case 'M':
+      case 'L':
+        x = cmd[1];
+        y = cmd[2];
+        break;
+      case 'C':
+        x = cmd[5];
+        y = cmd[6];
+        break;
+      case 'Q':
+        x = cmd[3];
+        y = cmd[4];
+        break;
+      default:
+        return { x: 0, y: 0 };
+    }
+    
+    // Adjust for pathOffset
+    x = x - fabricObject.pathOffset.x;
+    y = y - fabricObject.pathOffset.y;
+    
+    return fabric.util.transformPoint(
+      { x, y },
+      fabric.util.multiplyTransformMatrices(
+        fabricObject.canvas.viewportTransform,
+        fabricObject.calcTransformMatrix()
+      )
+    );
+  };
+}
+
+/**
+ * Create action handler for dragging a path node
+ * @param {number} commandIndex - Index of the command in the path array
+ * @param {string} command - The path command type (M, L, C, Q)
+ * @returns {Function} Action handler function
+ */
+function createPathNodeActionHandler(commandIndex, command) {
+  return function(eventData, transform, x, y) {
+    const path = transform.target;
+    const mouseLocalPosition = path.toLocalPoint(
+      new fabric.Point(x, y),
+      'center',
+      'center'
+    );
+    
+    const newX = mouseLocalPosition.x + path.pathOffset.x;
+    const newY = mouseLocalPosition.y + path.pathOffset.y;
+    
+    const cmd = path.path[commandIndex];
+    
+    // Update endpoint coordinates based on command type
+    switch (command) {
+      case 'M':
+      case 'L':
+        cmd[1] = newX;
+        cmd[2] = newY;
+        break;
+      case 'C':
+        // For cubic bezier, also move control points by the same delta
+        const oldX = cmd[5];
+        const oldY = cmd[6];
+        const dx = newX - oldX;
+        const dy = newY - oldY;
+        // Move second control point with the endpoint
+        cmd[3] += dx;
+        cmd[4] += dy;
+        // Update endpoint
+        cmd[5] = newX;
+        cmd[6] = newY;
+        break;
+      case 'Q':
+        // For quadratic bezier, also move control point
+        const oldQx = cmd[3];
+        const oldQy = cmd[4];
+        const dxQ = newX - oldQx;
+        const dyQ = newY - oldQy;
+        cmd[1] += dxQ;
+        cmd[2] += dyQ;
+        cmd[3] = newX;
+        cmd[4] = newY;
+        break;
+    }
+    
+    path.dirty = true;
+    path.setCoords();
+    return true;
+  };
+}
+
+/**
+ * Recalculate bounding box for a Path after node editing
+ * @param {fabric.Path} path - The path to update
+ */
+function recalculatePathBoundingBox(path) {
+  if (!path || !path.path || path.path.length === 0) return;
+  
+  // Get all points from path commands
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  
+  for (const cmd of path.path) {
+    const command = cmd[0];
+    switch (command) {
+      case 'M':
+      case 'L':
+        minX = Math.min(minX, cmd[1]);
+        minY = Math.min(minY, cmd[2]);
+        maxX = Math.max(maxX, cmd[1]);
+        maxY = Math.max(maxY, cmd[2]);
+        break;
+      case 'C':
+        // Include control points and endpoint in bounding box
+        minX = Math.min(minX, cmd[1], cmd[3], cmd[5]);
+        minY = Math.min(minY, cmd[2], cmd[4], cmd[6]);
+        maxX = Math.max(maxX, cmd[1], cmd[3], cmd[5]);
+        maxY = Math.max(maxY, cmd[2], cmd[4], cmd[6]);
+        break;
+      case 'Q':
+        minX = Math.min(minX, cmd[1], cmd[3]);
+        minY = Math.min(minY, cmd[2], cmd[4]);
+        maxX = Math.max(maxX, cmd[1], cmd[3]);
+        maxY = Math.max(maxY, cmd[2], cmd[4]);
+        break;
+    }
+  }
+  
+  const width = maxX - minX;
+  const height = maxY - minY;
+  
+  const newPathOffset = {
+    x: minX + width / 2,
+    y: minY + height / 2
+  };
+  
+  path.pathOffset = newPathOffset;
+  path.set({
+    left: minX,
+    top: minY,
+    width: width,
+    height: height
+  });
+  
+  path.setCoords();
+  path.dirty = true;
+}
+
+/**
+ * Create node editing controls for a polygon/polyline (legacy - kept for reference)
  * @param {fabric.Object} shape - The shape to create controls for
  * @returns {Object} Control configuration object
  */
@@ -899,6 +1417,206 @@ export function forceRotateMode(obj, canvas) {
  */
 export function getCurrentMode(obj) {
   return getMode(obj);
+}
+
+/**
+ * Check if the active object is in node edit mode
+ * @param {fabric.Canvas} canvas - The canvas instance
+ * @returns {boolean} True if active object is in node edit mode
+ */
+export function isInNodeEditMode(canvas) {
+  const activeObj = canvas?.getActiveObject();
+  return activeObj && getMode(activeObj) === MODE.NODE_EDIT;
+}
+
+/**
+ * Exit node edit mode for the active object
+ * @param {fabric.Canvas} canvas - The canvas instance
+ */
+export function exitNodeEdit(canvas) {
+  const activeObj = canvas?.getActiveObject();
+  if (activeObj && getMode(activeObj) === MODE.NODE_EDIT) {
+    exitNodeEditMode(activeObj, canvas);
+  }
+}
+
+/**
+ * Convert a line segment to a cubic bezier curve
+ * The segment going INTO the specified anchor point
+ * @param {fabric.Path} path - The path object
+ * @param {number} anchorIndex - Index of the anchor point (from getPathAnchors)
+ * @param {fabric.Canvas} canvas - The canvas instance
+ * @returns {boolean} True if conversion was successful
+ */
+export function makeSegmentCurve(path, anchorIndex, canvas) {
+  if (!path || !path.path) return false;
+  
+  const anchors = getPathAnchors(path.path);
+  if (anchorIndex < 0 || anchorIndex >= anchors.length) return false;
+  
+  const anchor = anchors[anchorIndex];
+  const commandIndex = anchor.commandIndex;
+  const cmd = path.path[commandIndex];
+  
+  // Can only convert L (line) commands to C (curve)
+  if (cmd[0] !== 'L') {
+    debugLog('[InkscapeTransformMode] Cannot convert - not a line segment');
+    return false;
+  }
+  
+  // Get the previous anchor point to calculate control points
+  let prevAnchor;
+  if (anchorIndex > 0) {
+    prevAnchor = anchors[anchorIndex - 1];
+  } else {
+    // First point after M - check if path is closed to wrap around
+    const lastCmd = path.path[path.path.length - 1];
+    if (lastCmd[0] === 'Z' && anchors.length > 1) {
+      prevAnchor = anchors[anchors.length - 1];
+    } else {
+      debugLog('[InkscapeTransformMode] Cannot convert first segment');
+      return false;
+    }
+  }
+  
+  const startX = prevAnchor.x;
+  const startY = prevAnchor.y;
+  const endX = cmd[1];
+  const endY = cmd[2];
+  
+  // Calculate default control points (1/3 and 2/3 along the line)
+  // This creates a curve that initially looks like a straight line
+  // but can be adjusted
+  const dx = endX - startX;
+  const dy = endY - startY;
+  
+  // Create control points perpendicular to the line for more visible curve
+  const perpX = -dy * 0.25;  // Perpendicular offset
+  const perpY = dx * 0.25;
+  
+  const cp1x = startX + dx * 0.33 + perpX;
+  const cp1y = startY + dy * 0.33 + perpY;
+  const cp2x = startX + dx * 0.67 + perpX;
+  const cp2y = startY + dy * 0.67 + perpY;
+  
+  // Convert L to C (cubic bezier)
+  path.path[commandIndex] = ['C', cp1x, cp1y, cp2x, cp2y, endX, endY];
+  
+  debugLog('[InkscapeTransformMode] Converted segment to curve:', {
+    commandIndex,
+    from: [startX, startY],
+    to: [endX, endY],
+    cp1: [cp1x, cp1y],
+    cp2: [cp2x, cp2y]
+  });
+  
+  // Recreate node controls to include bezier handle controls
+  const nodeControls = createPathNodeControls(path);
+  path.controls = nodeControls;
+  
+  path.dirty = true;
+  path.setCoords();
+  if (canvas) canvas.requestRenderAll();
+  
+  return true;
+}
+
+/**
+ * Convert a cubic bezier curve segment to a straight line
+ * @param {fabric.Path} path - The path object
+ * @param {number} anchorIndex - Index of the anchor point
+ * @param {fabric.Canvas} canvas - The canvas instance
+ * @returns {boolean} True if conversion was successful
+ */
+export function makeSegmentLine(path, anchorIndex, canvas) {
+  if (!path || !path.path) return false;
+  
+  const anchors = getPathAnchors(path.path);
+  if (anchorIndex < 0 || anchorIndex >= anchors.length) return false;
+  
+  const anchor = anchors[anchorIndex];
+  const commandIndex = anchor.commandIndex;
+  const cmd = path.path[commandIndex];
+  
+  // Can only convert C (curve) commands to L (line)
+  if (cmd[0] !== 'C') {
+    debugLog('[InkscapeTransformMode] Cannot convert - not a curve segment');
+    return false;
+  }
+  
+  // Get endpoint from cubic bezier
+  const endX = cmd[5];
+  const endY = cmd[6];
+  
+  // Convert C to L
+  path.path[commandIndex] = ['L', endX, endY];
+  
+  debugLog('[InkscapeTransformMode] Converted curve to line:', {
+    commandIndex,
+    endpoint: [endX, endY]
+  });
+  
+  // Recreate node controls
+  const nodeControls = createPathNodeControls(path);
+  path.controls = nodeControls;
+  
+  path.dirty = true;
+  path.setCoords();
+  if (canvas) canvas.requestRenderAll();
+  
+  return true;
+}
+
+/**
+ * Make ALL segments of a path into curves
+ * Useful for quickly converting a polygon to a fully curved shape
+ * @param {fabric.Path} path - The path object
+ * @param {fabric.Canvas} canvas - The canvas instance
+ */
+export function makeAllSegmentsCurves(path, canvas) {
+  if (!path || !path.path) return;
+  
+  const anchors = getPathAnchors(path.path);
+  let converted = 0;
+  
+  // Convert each L segment to C
+  for (let i = 1; i < anchors.length; i++) {
+    if (makeSegmentCurve(path, i, null)) {
+      converted++;
+    }
+  }
+  
+  debugLog(`[InkscapeTransformMode] Converted ${converted} segments to curves`);
+  
+  // Regenerate controls and render once at the end
+  const nodeControls = createPathNodeControls(path);
+  path.controls = nodeControls;
+  path.dirty = true;
+  path.setCoords();
+  if (canvas) canvas.requestRenderAll();
+}
+
+/**
+ * Get the segment type (line or curve) at a given anchor
+ * @param {fabric.Path} path - The path object
+ * @param {number} anchorIndex - Index of the anchor point
+ * @returns {string|null} 'line', 'curve', or null
+ */
+export function getSegmentType(path, anchorIndex) {
+  if (!path || !path.path) return null;
+  
+  const anchors = getPathAnchors(path.path);
+  if (anchorIndex < 0 || anchorIndex >= anchors.length) return null;
+  
+  const cmd = path.path[anchors[anchorIndex].commandIndex][0];
+  
+  switch (cmd) {
+    case 'L': return 'line';
+    case 'C': return 'curve';
+    case 'Q': return 'curve';
+    case 'M': return 'move';
+    default: return null;
+  }
 }
 
 /**

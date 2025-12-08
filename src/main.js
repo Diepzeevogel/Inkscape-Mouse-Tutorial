@@ -4,6 +4,7 @@ import { startTutorial, startTutorialDirect, startLesson2, startLesson3, startLe
 import { startLesson6, cleanupLesson6 } from './Lesson6.js';
 import { shapeDrawingController } from './ShapeDrawingController.js';
 import { penToolController } from './PenToolController.js';
+import { isInNodeEditMode, exitNodeEdit, makeSegmentCurve, makeSegmentLine, makeAllSegmentsCurves, getCurrentMode, TRANSFORM_MODE } from './InkscapeTransformMode.js';
 
 // Device detection - check for desktop/laptop with mouse
 function isDesktopWithMouse() {
@@ -416,6 +417,81 @@ canvas.on('object:modified', (e) => {
     shapeDrawingController.updateControlsForSelection(e.target);
   }
 });
+
+// =============================================
+// Node Edit Toolbar Integration
+// =============================================
+const nodeToolbar = document.getElementById('nodeToolbar');
+const btnMakeCurve = document.getElementById('btn-make-curve');
+const btnMakeLine = document.getElementById('btn-make-line');
+const btnExitNodeEdit = document.getElementById('btn-exit-node-edit');
+
+/**
+ * Update node toolbar visibility based on current selection mode
+ */
+function updateNodeToolbarVisibility() {
+  if (!nodeToolbar) return;
+  
+  const activeObj = canvas.getActiveObject();
+  const inNodeEdit = activeObj && getCurrentMode(activeObj) === TRANSFORM_MODE.NODE_EDIT;
+  
+  if (inNodeEdit) {
+    nodeToolbar.classList.remove('hidden');
+  } else {
+    nodeToolbar.classList.add('hidden');
+  }
+}
+
+// Listen for mode changes
+canvas.on('selection:created', updateNodeToolbarVisibility);
+canvas.on('selection:updated', updateNodeToolbarVisibility);
+canvas.on('selection:cleared', updateNodeToolbarVisibility);
+// Also check after any render in case mode changed via double-click
+canvas.on('after:render', updateNodeToolbarVisibility);
+
+// Make Curve button - convert all line segments to curves
+if (btnMakeCurve) {
+  btnMakeCurve.addEventListener('click', () => {
+    const activeObj = canvas.getActiveObject();
+    if (activeObj && activeObj.path) {
+      // For now, convert ALL segments to curves
+      // In the future, we can add per-segment selection
+      makeAllSegmentsCurves(activeObj, canvas);
+    }
+  });
+}
+
+// Make Line button - convert curve back to line
+// For now, converts all curves back to lines
+if (btnMakeLine) {
+  btnMakeLine.addEventListener('click', () => {
+    const activeObj = canvas.getActiveObject();
+    if (activeObj && activeObj.path) {
+      // Convert all curve segments back to lines
+      for (let i = 0; i < activeObj.path.length; i++) {
+        const cmd = activeObj.path[i];
+        if (cmd[0] === 'C') {
+          // Convert cubic bezier to line - keep endpoint
+          activeObj.path[i] = ['L', cmd[5], cmd[6]];
+        } else if (cmd[0] === 'Q') {
+          // Convert quadratic bezier to line
+          activeObj.path[i] = ['L', cmd[3], cmd[4]];
+        }
+      }
+      activeObj.dirty = true;
+      activeObj.setCoords();
+      canvas.requestRenderAll();
+    }
+  });
+}
+
+// Exit Node Edit button
+if (btnExitNodeEdit) {
+  btnExitNodeEdit.addEventListener('click', () => {
+    exitNodeEdit(canvas);
+    updateNodeToolbarVisibility();
+  });
+}
 
 // Remove overlay when selection is made in Fabric
 if (canvas) {

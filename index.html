@@ -45,6 +45,21 @@
         <button class="tool-btn" id="tool-measure" title="Measure" aria-label="Measure tool" type="button"><img src="assets/icons/tool-measure.svg" alt="Measure"></button>
         <button class="tool-btn" id="tool-zoom" title="Zoom" aria-label="Zoom tool" type="button"><img src="assets/icons/zoom.svg" alt="Zoom"></button>
       </div>
+      
+      <!-- Node Edit Context Toolbar -->
+      <div id="nodeToolbar" class="node-toolbar hidden">
+        <span class="toolbar-label">Node:</span>
+        <button id="btn-make-curve" class="node-tool-btn" title="Make segment curved (Bezier)">
+          <span>Make Curve</span>
+        </button>
+        <button id="btn-make-line" class="node-tool-btn" title="Make segment straight">
+          <span>Make Line</span>
+        </button>
+        <div class="toolbar-sep"></div>
+        <button id="btn-exit-node-edit" class="node-tool-btn" title="Exit node editing (Escape)">
+          <span>Done</span>
+        </button>
+      </div>
       <canvas id="c"></canvas>
       <aside id="panel">
         <h3>Opdracht</h3>
