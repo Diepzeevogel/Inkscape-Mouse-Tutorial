@@ -799,78 +799,99 @@ function exitNodeEditMode(obj, canvas) {
  * @param {fabric.Path} path - The path object being edited
  */
 function drawBezierHandleLines(ctx, path) {
-  if (!path || !path.path || !path.controls) return;
+  if (!path || !path.path || !path.controls || !path.canvas) return;
   
   const pathData = path.path;
-  const anchors = getPathAnchors(pathData);
   
   ctx.save();
   ctx.strokeStyle = '#1976d2';
   ctx.lineWidth = 1;
   ctx.setLineDash([4, 4]);
   
-  // Use the same transformation that controls use
-  const matrix = fabric.util.multiplyTransformMatrices(
-    path.canvas.viewportTransform,
-    path.calcTransformMatrix()
-  );
+  // Iterate through controls to find bezier handle pairs
+  // Use the control's positionHandler to get exact screen coordinates
+  // This ensures we use the same calculation as the control rendering
+  const controlKeys = Object.keys(path.controls);
   
-  for (let i = 0; i < anchors.length; i++) {
-    const anchor = anchors[i];
-    const cmd = pathData[anchor.commandIndex];
+  for (const key of controlKeys) {
+    const control = path.controls[key];
     
-    if (cmd[0] === 'C') {
-      // Get the control handles using same calculation as position handlers
-      const cp1x = cmd[1] - path.pathOffset.x;
-      const cp1y = cmd[2] - path.pathOffset.y;
-      const cp2x = cmd[3] - path.pathOffset.x;
-      const cp2y = cmd[4] - path.pathOffset.y;
-      const endX = cmd[5] - path.pathOffset.x;
-      const endY = cmd[6] - path.pathOffset.y;
+    // Check if this is a cp1 control (connects to previous anchor)
+    if (key.startsWith('cp1_')) {
+      const anchorIndex = parseInt(key.replace('cp1_', ''));
+      const anchorKey = 'p' + anchorIndex;
       
-      // Find the start point for this curve segment (the previous anchor)
-      let startX, startY;
+      // Get cp1 position
+      const cp1Pos = control.positionHandler(
+        { x: path.width, y: path.height },
+        null,
+        path
+      );
       
-      // Look at the previous command to find the starting point
-      const cmdIndex = anchor.commandIndex;
+      // Find the previous anchor to connect to
+      // cp1 connects to the START of the curve (previous point)
+      const cmdIndex = control.commandIndex;
       if (cmdIndex > 0) {
         const prevCmd = pathData[cmdIndex - 1];
+        let prevX, prevY;
+        
         switch (prevCmd[0]) {
           case 'M':
           case 'L':
-            startX = prevCmd[1] - path.pathOffset.x;
-            startY = prevCmd[2] - path.pathOffset.y;
+            prevX = prevCmd[1] - path.pathOffset.x;
+            prevY = prevCmd[2] - path.pathOffset.y;
             break;
           case 'C':
-            startX = prevCmd[5] - path.pathOffset.x;
-            startY = prevCmd[6] - path.pathOffset.y;
+            prevX = prevCmd[5] - path.pathOffset.x;
+            prevY = prevCmd[6] - path.pathOffset.y;
             break;
           case 'Q':
-            startX = prevCmd[3] - path.pathOffset.x;
-            startY = prevCmd[4] - path.pathOffset.y;
+            prevX = prevCmd[3] - path.pathOffset.x;
+            prevY = prevCmd[4] - path.pathOffset.y;
             break;
         }
+        
+        if (prevX !== undefined) {
+          // Transform using same method as position handlers
+          const matrix = fabric.util.multiplyTransformMatrices(
+            path.canvas.viewportTransform,
+            path.calcTransformMatrix()
+          );
+          const prevScreen = fabric.util.transformPoint({ x: prevX, y: prevY }, matrix);
+          
+          ctx.beginPath();
+          ctx.moveTo(prevScreen.x, prevScreen.y);
+          ctx.lineTo(cp1Pos.x, cp1Pos.y);
+          ctx.stroke();
+        }
       }
+    }
+    
+    // Check if this is a cp2 control (connects to current anchor/endpoint)
+    if (key.startsWith('cp2_')) {
+      const anchorIndex = parseInt(key.replace('cp2_', ''));
+      const anchorKey = 'p' + anchorIndex;
       
-      // Transform to screen coordinates
-      const cp1Screen = fabric.util.transformPoint({ x: cp1x, y: cp1y }, matrix);
-      const cp2Screen = fabric.util.transformPoint({ x: cp2x, y: cp2y }, matrix);
-      const endScreen = fabric.util.transformPoint({ x: endX, y: endY }, matrix);
+      // Get cp2 position
+      const cp2Pos = control.positionHandler(
+        { x: path.width, y: path.height },
+        null,
+        path
+      );
       
-      // Draw line from start point to cp1 (first control handle)
-      if (startX !== undefined) {
-        const startScreen = fabric.util.transformPoint({ x: startX, y: startY }, matrix);
+      // Get the anchor (endpoint) position - cp2 connects to END of curve
+      if (path.controls[anchorKey]) {
+        const anchorPos = path.controls[anchorKey].positionHandler(
+          { x: path.width, y: path.height },
+          null,
+          path
+        );
+        
         ctx.beginPath();
-        ctx.moveTo(startScreen.x, startScreen.y);
-        ctx.lineTo(cp1Screen.x, cp1Screen.y);
+        ctx.moveTo(anchorPos.x, anchorPos.y);
+        ctx.lineTo(cp2Pos.x, cp2Pos.y);
         ctx.stroke();
       }
-      
-      // Draw line from endpoint to cp2 (second control handle)
-      ctx.beginPath();
-      ctx.moveTo(endScreen.x, endScreen.y);
-      ctx.lineTo(cp2Screen.x, cp2Screen.y);
-      ctx.stroke();
     }
   }
   
