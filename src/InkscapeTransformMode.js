@@ -799,7 +799,7 @@ function exitNodeEditMode(obj, canvas) {
  * @param {fabric.Path} path - The path object being edited
  */
 function drawBezierHandleLines(ctx, path) {
-  if (!path || !path.path) return;
+  if (!path || !path.path || !path.controls) return;
   
   const pathData = path.path;
   const anchors = getPathAnchors(pathData);
@@ -809,7 +809,7 @@ function drawBezierHandleLines(ctx, path) {
   ctx.lineWidth = 1;
   ctx.setLineDash([4, 4]);
   
-  // Get transform matrix for converting path coordinates to screen coordinates
+  // Use the same transformation that controls use
   const matrix = fabric.util.multiplyTransformMatrices(
     path.canvas.viewportTransform,
     path.calcTransformMatrix()
@@ -820,7 +820,7 @@ function drawBezierHandleLines(ctx, path) {
     const cmd = pathData[anchor.commandIndex];
     
     if (cmd[0] === 'C') {
-      // Get control points (subtract pathOffset for local coordinates)
+      // Get the control handles using same calculation as position handlers
       const cp1x = cmd[1] - path.pathOffset.x;
       const cp1y = cmd[2] - path.pathOffset.y;
       const cp2x = cmd[3] - path.pathOffset.x;
@@ -828,46 +828,45 @@ function drawBezierHandleLines(ctx, path) {
       const endX = cmd[5] - path.pathOffset.x;
       const endY = cmd[6] - path.pathOffset.y;
       
-      // Get the previous anchor point (for cp1 line)
-      // Need to find the endpoint of the previous command
-      let prevX, prevY;
-      if (i > 0) {
-        const prevAnchor = anchors[i - 1];
-        // prevAnchor.x/y are absolute coordinates, need to subtract pathOffset
-        prevX = prevAnchor.x - path.pathOffset.x;
-        prevY = prevAnchor.y - path.pathOffset.y;
-      } else {
-        // First curve segment - check if there's an M command before it
-        // The cp1 would connect to the starting M point
-        for (let j = anchor.commandIndex - 1; j >= 0; j--) {
-          const prevCmd = pathData[j];
-          if (prevCmd[0] === 'M' || prevCmd[0] === 'L') {
-            prevX = prevCmd[1] - path.pathOffset.x;
-            prevY = prevCmd[2] - path.pathOffset.y;
+      // Find the start point for this curve segment (the previous anchor)
+      let startX, startY;
+      
+      // Look at the previous command to find the starting point
+      const cmdIndex = anchor.commandIndex;
+      if (cmdIndex > 0) {
+        const prevCmd = pathData[cmdIndex - 1];
+        switch (prevCmd[0]) {
+          case 'M':
+          case 'L':
+            startX = prevCmd[1] - path.pathOffset.x;
+            startY = prevCmd[2] - path.pathOffset.y;
             break;
-          } else if (prevCmd[0] === 'C') {
-            prevX = prevCmd[5] - path.pathOffset.x;
-            prevY = prevCmd[6] - path.pathOffset.y;
+          case 'C':
+            startX = prevCmd[5] - path.pathOffset.x;
+            startY = prevCmd[6] - path.pathOffset.y;
             break;
-          }
+          case 'Q':
+            startX = prevCmd[3] - path.pathOffset.x;
+            startY = prevCmd[4] - path.pathOffset.y;
+            break;
         }
       }
       
-      // Transform all points to screen coordinates
+      // Transform to screen coordinates
       const cp1Screen = fabric.util.transformPoint({ x: cp1x, y: cp1y }, matrix);
       const cp2Screen = fabric.util.transformPoint({ x: cp2x, y: cp2y }, matrix);
       const endScreen = fabric.util.transformPoint({ x: endX, y: endY }, matrix);
       
-      // Draw line from previous anchor to cp1 (if exists)
-      if (prevX !== undefined) {
-        const prevScreen = fabric.util.transformPoint({ x: prevX, y: prevY }, matrix);
+      // Draw line from start point to cp1 (first control handle)
+      if (startX !== undefined) {
+        const startScreen = fabric.util.transformPoint({ x: startX, y: startY }, matrix);
         ctx.beginPath();
-        ctx.moveTo(prevScreen.x, prevScreen.y);
+        ctx.moveTo(startScreen.x, startScreen.y);
         ctx.lineTo(cp1Screen.x, cp1Screen.y);
         ctx.stroke();
       }
       
-      // Draw line from endpoint to cp2
+      // Draw line from endpoint to cp2 (second control handle)
       ctx.beginPath();
       ctx.moveTo(endScreen.x, endScreen.y);
       ctx.lineTo(cp2Screen.x, cp2Screen.y);
