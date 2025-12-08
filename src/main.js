@@ -360,13 +360,9 @@ if (selectTool) {
   });
 }
 
-// Disable all non-select tools for the first lesson (node tool is gated by NODE_EDITING feature)
+// Disable all non-select tools for the first lesson (tools are enabled per-lesson)
 document.querySelectorAll('#leftToolbar .tool-btn').forEach(b => {
   if (b.id !== 'tool-select') {
-    // Node tool is enabled only if NODE_EDITING feature is available for current lesson
-    if (b.id === 'tool-node' && isFeatureEnabled('NODE_EDITING')) {
-      return; // Keep node tool enabled
-    }
     b.disabled = true;
     b.setAttribute('aria-disabled', 'true');
   }
