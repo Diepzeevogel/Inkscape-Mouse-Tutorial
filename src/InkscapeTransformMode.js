@@ -742,13 +742,10 @@ function enterNodeEditMode(obj, canvas) {
 function exitNodeEditMode(obj, canvas) {
   if (!obj) return;
   
-  // For paths, just mark dirty and let fabric recalculate naturally
-  // Don't manually recalculate bounding box as it can cause position jumps
+  // Recalculate bounding box for paths so handles stay within visible area
   if (obj.path && Array.isArray(obj.path)) {
-    obj.dirty = true;
-    obj.setCoords();
+    recalculatePathBoundingBox(obj);
   } else if (obj.points && Array.isArray(obj.points)) {
-    // For old polygon editing (shouldn't happen anymore)
     recalculateBoundingBox(obj);
   }
   
@@ -758,21 +755,27 @@ function exitNodeEditMode(obj, canvas) {
     delete obj._originalDrawControls;
   }
   
-  // Restore original controls
+  // Restore original controls - need to use fabric defaults for Path objects
+  // since they were converted from Polygon and don't have saved original controls
   const original = originalControls.get(obj);
-  if (original) {
+  if (original && Object.keys(original).length > 0 && original.tl) {
+    // Only restore if we have valid standard controls
     obj.controls = original;
     originalControls.delete(obj);
   } else {
-    // Fallback: recreate standard controls
-    obj.controls = fabric.Object.prototype.controls;
+    // Recreate standard controls from fabric defaults
+    obj.controls = { ...fabric.Object.prototype.controls };
+    originalControls.delete(obj);
   }
   
   obj.hasBorders = true;
   obj.dirty = true;
   
-  // Reset to scale mode
-  setScaleMode(obj);
+  // Reset to scale mode - but only if we have valid controls
+  if (obj.controls && obj.controls.tl) {
+    setScaleMode(obj);
+  }
+  
   canvas.requestRenderAll();
   
   debugLog('[InkscapeTransformMode] Exited node edit mode');
@@ -1171,10 +1174,14 @@ function createPathNodeActionHandler(commandIndex, command) {
 
 /**
  * Recalculate bounding box for a Path after node editing
+ * Updates dimensions while maintaining visual position
  * @param {fabric.Path} path - The path to update
  */
 function recalculatePathBoundingBox(path) {
   if (!path || !path.path || path.path.length === 0) return;
+  
+  // Store old pathOffset for delta calculation
+  const oldPathOffset = { ...path.pathOffset };
   
   // Get all points from path commands
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
@@ -1208,15 +1215,24 @@ function recalculatePathBoundingBox(path) {
   const width = maxX - minX;
   const height = maxY - minY;
   
+  // New pathOffset is the center of the bounding box
   const newPathOffset = {
     x: minX + width / 2,
     y: minY + height / 2
   };
   
+  // Calculate offset delta - how much the center moved
+  const deltaX = newPathOffset.x - oldPathOffset.x;
+  const deltaY = newPathOffset.y - oldPathOffset.y;
+  
+  // Update pathOffset
   path.pathOffset = newPathOffset;
+  
+  // Adjust left/top to compensate for pathOffset change
+  // This keeps the path visually in the same position
   path.set({
-    left: minX,
-    top: minY,
+    left: path.left + deltaX,
+    top: path.top + deltaY,
     width: width,
     height: height
   });
