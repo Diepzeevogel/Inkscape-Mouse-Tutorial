@@ -709,6 +709,17 @@ function enterNodeEditMode(obj, canvas) {
   const nodeControls = createPathNodeControls(targetObj);
   targetObj.controls = nodeControls;
   
+  // Override drawControls to draw bezier handle lines first
+  if (!targetObj._originalDrawControls) {
+    targetObj._originalDrawControls = targetObj.drawControls;
+    targetObj.drawControls = function(ctx, styleOverride) {
+      // Draw bezier handle lines before controls
+      drawBezierHandleLines(ctx, this);
+      // Call original drawControls
+      return this._originalDrawControls.call(this, ctx, styleOverride);
+    };
+  }
+  
   // Hide standard visibility but allow interaction
   targetObj.setControlsVisibility({
     mt: false, mb: false, ml: false, mr: false,
@@ -739,6 +750,12 @@ function exitNodeEditMode(obj, canvas) {
     recalculateBoundingBox(obj);
   }
   
+  // Restore original drawControls method
+  if (obj._originalDrawControls) {
+    obj.drawControls = obj._originalDrawControls;
+    delete obj._originalDrawControls;
+  }
+  
   // Restore original controls
   const original = originalControls.get(obj);
   if (original) {
@@ -757,6 +774,76 @@ function exitNodeEditMode(obj, canvas) {
   canvas.requestRenderAll();
   
   debugLog('[InkscapeTransformMode] Exited node edit mode');
+}
+
+/**
+ * Draw bezier handle lines connecting control points to their anchors
+ * Called before drawing controls to ensure lines appear behind control points
+ * @param {CanvasRenderingContext2D} ctx - The canvas context
+ * @param {fabric.Path} path - The path object being edited
+ */
+function drawBezierHandleLines(ctx, path) {
+  if (!path || !path.path) return;
+  
+  const pathData = path.path;
+  const anchors = getPathAnchors(pathData);
+  
+  ctx.save();
+  ctx.strokeStyle = '#1976d2';
+  ctx.lineWidth = 1;
+  ctx.setLineDash([4, 4]);
+  
+  // Get transform matrix for converting path coordinates to screen coordinates
+  const matrix = fabric.util.multiplyTransformMatrices(
+    path.canvas.viewportTransform,
+    path.calcTransformMatrix()
+  );
+  
+  for (let i = 0; i < anchors.length; i++) {
+    const anchor = anchors[i];
+    const cmd = pathData[anchor.commandIndex];
+    
+    if (cmd[0] === 'C') {
+      // Get control points
+      const cp1x = cmd[1] - path.pathOffset.x;
+      const cp1y = cmd[2] - path.pathOffset.y;
+      const cp2x = cmd[3] - path.pathOffset.x;
+      const cp2y = cmd[4] - path.pathOffset.y;
+      const endX = cmd[5] - path.pathOffset.x;
+      const endY = cmd[6] - path.pathOffset.y;
+      
+      // Get the previous anchor point (for cp1)
+      let prevX, prevY;
+      if (i > 0) {
+        const prevAnchor = anchors[i - 1];
+        prevX = prevAnchor.x - path.pathOffset.x;
+        prevY = prevAnchor.y - path.pathOffset.y;
+      }
+      
+      // Transform all points to screen coordinates
+      const cp1Screen = fabric.util.transformPoint({ x: cp1x, y: cp1y }, matrix);
+      const cp2Screen = fabric.util.transformPoint({ x: cp2x, y: cp2y }, matrix);
+      const endScreen = fabric.util.transformPoint({ x: endX, y: endY }, matrix);
+      
+      // Draw line from cp1 to previous anchor (if exists)
+      if (prevX !== undefined) {
+        const prevScreen = fabric.util.transformPoint({ x: prevX, y: prevY }, matrix);
+        ctx.beginPath();
+        ctx.moveTo(prevScreen.x, prevScreen.y);
+        ctx.lineTo(cp1Screen.x, cp1Screen.y);
+        ctx.stroke();
+      }
+      
+      // Draw line from cp2 to endpoint
+      ctx.beginPath();
+      ctx.moveTo(endScreen.x, endScreen.y);
+      ctx.lineTo(cp2Screen.x, cp2Screen.y);
+      ctx.stroke();
+    }
+  }
+  
+  ctx.setLineDash([]);
+  ctx.restore();
 }
 
 /**
@@ -953,62 +1040,11 @@ function createBezierHandleActionHandler(commandIndex, handleType) {
 
 /**
  * Render function for bezier control handle points (diamonds)
+ * Note: Handle lines are drawn separately via drawBezierHandleLines
  */
 function renderBezierHandleControl(ctx, left, top, styleOverride, fabricObject) {
   const size = 8;
   ctx.save();
-  
-  // Draw line from control point to its related anchor point
-  // This creates the "handle arm" visualization
-  const control = this;
-  const pathData = fabricObject.path;
-  
-  if (pathData && control.commandIndex !== undefined) {
-    const cmd = pathData[control.commandIndex];
-    if (cmd && cmd[0] === 'C') {
-      // Get the previous anchor point for cp1, or the endpoint for cp2
-      let anchorX, anchorY;
-      
-      if (control.handleType === 'cp2') {
-        // cp2 connects to the curve's endpoint
-        anchorX = cmd[5] - fabricObject.pathOffset.x;
-        anchorY = cmd[6] - fabricObject.pathOffset.y;
-      } else {
-        // cp1 connects to the previous point
-        // Find the previous anchor
-        const anchors = getPathAnchors(pathData);
-        for (let i = 0; i < anchors.length; i++) {
-          if (anchors[i].commandIndex === control.commandIndex && i > 0) {
-            const prevAnchor = anchors[i - 1];
-            anchorX = prevAnchor.x - fabricObject.pathOffset.x;
-            anchorY = prevAnchor.y - fabricObject.pathOffset.y;
-            break;
-          }
-        }
-      }
-      
-      if (anchorX !== undefined) {
-        // Transform anchor point to screen coordinates
-        const anchorScreen = fabric.util.transformPoint(
-          { x: anchorX, y: anchorY },
-          fabric.util.multiplyTransformMatrices(
-            fabricObject.canvas.viewportTransform,
-            fabricObject.calcTransformMatrix()
-          )
-        );
-        
-        // Draw handle line
-        ctx.strokeStyle = '#1976d2';
-        ctx.lineWidth = 1;
-        ctx.setLineDash([4, 4]);
-        ctx.beginPath();
-        ctx.moveTo(anchorScreen.x, anchorScreen.y);
-        ctx.lineTo(left, top);
-        ctx.stroke();
-        ctx.setLineDash([]);
-      }
-    }
-  }
   
   // Draw diamond shape for control handle
   ctx.fillStyle = '#1976d2';
