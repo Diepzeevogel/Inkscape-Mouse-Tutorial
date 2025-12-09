@@ -232,7 +232,7 @@ class PenToolController {
       : '#000000';
     const strokeWidth = this.fillStrokePanel 
       ? this.fillStrokePanel.getLastStrokeWidth() 
-      : 1;
+      : 0.3;
     
     // Create polyline (no fill while drawing)
     this.currentPath = new fabric.Polyline(this.points, {
@@ -293,7 +293,7 @@ class PenToolController {
       : '#000000';
     const strokeWidth = this.fillStrokePanel 
       ? this.fillStrokePanel.getLastStrokeWidth() 
-      : 1;
+      : 0.3;
     
     this.currentPath = new fabric.Polyline([...this.points], {
       fill: 'transparent',
@@ -383,7 +383,7 @@ class PenToolController {
       : '#000000';
     const strokeWidth = this.fillStrokePanel 
       ? this.fillStrokePanel.getLastStrokeWidth() 
-      : 1;
+      : 0.3;
     
     // Create final shape
     let finalShape;

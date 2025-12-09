@@ -282,6 +282,8 @@ export async function startLesson6() {
       console.log('[Lesson6] Shape tools enabled');
     }
 
+    // Boolean tool not enabled for this lesson in stable build
+
     // Enable node editing tool if configured for this lesson
     if (LESSON_FEATURES[6]?.NODE_EDITING) {
       const nodeTool = document.getElementById('tool-node');
@@ -340,6 +342,8 @@ export function cleanupLesson6() {
     penTool.setAttribute('aria-disabled', 'true');
   }
   penToolController.disable();
+
+  // Boolean tool left untouched during cleanup
 
   // Disable node editing tool
   const nodeTool = document.getElementById('tool-node');

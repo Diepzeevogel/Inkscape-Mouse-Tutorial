@@ -896,8 +896,9 @@ function drawBezierHandleLines(ctx, path) {
   const pathData = path.path;
   
   ctx.save();
-  // Reset context transform to identity - we'll apply transforms manually
-  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  // Reset transform but preserve retina scaling so dashed guides align with controls
+  const retina = path.canvas?.getRetinaScaling ? path.canvas.getRetinaScaling() : 1;
+  ctx.setTransform(retina, 0, 0, retina, 0, 0);
   
   ctx.strokeStyle = '#1976d2';
   ctx.lineWidth = 1;

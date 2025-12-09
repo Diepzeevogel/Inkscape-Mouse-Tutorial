@@ -410,6 +410,8 @@ if (penTool) {
   });
 }
 
+
+
 // When select tool is clicked, disable shape drawing, pen tool, and exit node edit mode
 if (selectTool) {
   const originalSelectHandler = selectTool.onclick;
