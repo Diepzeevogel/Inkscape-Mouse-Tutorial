@@ -11,6 +11,7 @@ import { assetLoader } from './AssetLoader.js';
 import { FillStrokePanel } from './FillStrokePanel.js';
 import { ASSETS, SVG_IDS, LESSON_FEATURES } from './constants.js';
 import { startLesson5 } from './Lesson5.js';
+import { AnimationController } from './AnimationController.js';
 import { copyPasteController } from './CopyPasteController.js';
 import { undoRedoController } from './UndoRedoController.js';
 import { shapeDrawingController } from './ShapeDrawingController.js';
@@ -262,6 +263,66 @@ export async function startLesson6() {
       await startLesson5();
     } catch (e) {
       console.warn('[Lesson6] Could not start Lesson 5 as backdrop:', e);
+    }
+
+    // After rendering lesson 5, simulate the 'end of lesson 5' active state
+    // by starting bulbs, gears and owl wiggle and zooming/panning to the machine.
+    const animCtrl = new AnimationController(canvas);
+
+    // Helper to find objects by tutorialId or svg id
+    function findByTutorialId(id) {
+      return canvas.getObjects().find(o => (o.tutorialId && o.tutorialId === id) || (o.svgId && o.svgId === id) || (o.id && o.id === id));
+    }
+
+    const machine = findByTutorialId('MakerMachine') || canvas.getObjects().find(o => (o.id || '').toLowerCase().includes('layer_2'));
+    const owl = findByTutorialId('Owl_with_Helmet') || findByTutorialId('Owl');
+    const toolbox = findByTutorialId('Toolbox');
+
+    // Toggle bulbs: find bulb_off / bulb_on children inside machine and swap visibility
+    if (machine && machine.getObjects) {
+      const machineChildren = machine.getObjects();
+      const bulbOff = machineChildren.filter(o => (o.id || o.svgId || '').toLowerCase().includes('bulb_off'));
+      const bulbOn = machineChildren.filter(o => (o.id || o.svgId || '').toLowerCase().includes('bulb_on'));
+
+      bulbOff.forEach(b => { b.visible = false; b.dirty = true; });
+      bulbOn.forEach(b => { b.visible = true; b.dirty = true; });
+    }
+
+    // Start gear rotation (search for gear* in machine)
+    let gearObjects = [];
+    if (machine && machine.getObjects) {
+      gearObjects = machine.getObjects().filter(o => /(gear\d*)/i.test((o.id || o.svgId || '').toString()));
+    }
+    if (gearObjects.length > 0) {
+      animCtrl.startRotationAnimation(gearObjects, 'lesson6-gears', 0.03);
+    }
+
+    // Start owl wiggle animation
+    if (owl) {
+      animCtrl.startWiggleAnimation(owl, 'lesson6-owl', 5, 300);
+      canvas.bringToFront(owl);
+    }
+    if (toolbox) canvas.bringToFront(toolbox);
+
+    // Animate viewport to focus on the machine similar to Lesson5.animateZoomOutToScene
+    if (machine) {
+      const machineBounds = machine.getBoundingRect(true);
+      const machineCenterX = machineBounds.left + machineBounds.width / 2;
+      const machineCenterY = machineBounds.top + machineBounds.height / 2;
+      const canvasWidth = canvas.getWidth();
+      const canvasHeight = canvas.getHeight();
+      const padding = 100; // similar to LAYOUT.MACHINE_ZOOM_PADDING
+
+      const zoomX = (canvasWidth - padding * 2) / machineBounds.width;
+      const zoomY = (canvasHeight - padding * 2) / machineBounds.height;
+      const targetZoom = Math.min(zoomX, zoomY, 1);
+
+      animCtrl.animateViewport({
+        targetZoom,
+        targetX: machineCenterX,
+        targetY: machineCenterY,
+        duration: 1000
+      });
     }
 
     // Setup Fill & Stroke panel for Lesson 6 interactions
