@@ -10,6 +10,7 @@ import { canvas, resetViewport } from './canvas.js';
 import { assetLoader } from './AssetLoader.js';
 import { FillStrokePanel } from './FillStrokePanel.js';
 import { ASSETS, SVG_IDS, LESSON_FEATURES } from './constants.js';
+import { startLesson5 } from './Lesson5.js';
 import { copyPasteController } from './CopyPasteController.js';
 import { undoRedoController } from './UndoRedoController.js';
 import { shapeDrawingController } from './ShapeDrawingController.js';
@@ -256,11 +257,14 @@ export async function startLesson6() {
     updatePageMetadata();
     updateInstructionPanel();
 
-    // Reset canvas
-    resetViewport();
-    canvas.clear();
+    // First, show the end state of Lesson 5 so the user sees the machine and context
+    try {
+      await startLesson5();
+    } catch (e) {
+      console.warn('[Lesson6] Could not start Lesson 5 as backdrop:', e);
+    }
 
-    // Setup Fill & Stroke panel
+    // Setup Fill & Stroke panel for Lesson 6 interactions
     lesson6State.fillStrokePanel = setupFillStrokePanel();
 
     // Load badge assets (badge, ink stains, hole)
