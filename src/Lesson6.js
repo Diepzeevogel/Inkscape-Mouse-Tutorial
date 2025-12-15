@@ -44,7 +44,7 @@ class Lesson6State {
 const lesson6State = new Lesson6State();
 
 // Feature flag: set to false to prevent the badge from appearing (useful for debugging)
-const ENABLE_BADGE_OUTPUT = false;
+const ENABLE_BADGE_OUTPUT = true;
 
 /**
  * Update page metadata for Lesson 4
@@ -298,63 +298,118 @@ export async function startLesson6() {
     }
 
     if (ENABLE_BADGE_OUTPUT) {
-      // Place badge small in front of canvas and animate it scaling up
-      badge.set({ selectable: false, evented: false, originX: 'center', originY: 'center' });
-      // center it near the machine area (approx center)
-      badge.left = canvas.width / 2;
-      badge.top = canvas.height / 2;
-      badge.scaleX = badge.scaleY = 0.05; // start very small
-      badge.setCoords();
-      canvas.add(badge);
+      // Find the machine to use its center as the badge center
+      const machine = canvas.getObjects().find(o => 
+        (o.tutorialId && o.tutorialId === 'MakerMachine') || 
+        (o.id && o.id.toLowerCase().includes('layer_2'))
+      );
+      
+      let badgeCenterX, badgeCenterY;
+      if (machine) {
+        const machineBounds = machine.getBoundingRect(true);
+        badgeCenterX = machineBounds.left + machineBounds.width / 2;
+        badgeCenterY = machineBounds.top + machineBounds.height / 2;
+      } else {
+        // Fallback to canvas center if machine not found
+        const vpt = canvas.viewportTransform;
+        const zoom = canvas.getZoom();
+        badgeCenterX = -vpt[4] / zoom + (canvas.getWidth() / zoom) / 2;
+        badgeCenterY = -vpt[5] / zoom + (canvas.getHeight() / zoom) / 2;
+      }
 
-      // Add ink stains (selectable initially for deletion)
+      // Group all badge elements together so they scale as one
+      const badgeGroup = new fabric.Group([], {
+        originX: 'center',
+        originY: 'center',
+        left: badgeCenterX,
+        top: badgeCenterY,
+        selectable: false,
+        evented: false
+      });
+
+      // Add badge to the group
+      badge.set({
+        originX: 'center',
+        originY: 'center',
+        left: 0,
+        top: 0
+      });
+      badgeGroup.addWithUpdate(badge);
+
+      // Add ink stains to the group
       if (ink) {
-        ink.set({ selectable: true, evented: true, originX: 'center', originY: 'center' });
-        ink.left = badge.left;
-        ink.top = badge.top;
-        canvas.add(ink);
+        ink.set({
+          originX: 'center',
+          originY: 'center',
+          left: 0,
+          top: 0,
+          selectable: true,
+          evented: true
+        });
+        badgeGroup.addWithUpdate(ink);
       }
 
-      // Add hole object but keep hidden (if provided)
+      // Add hole to the group (hidden initially)
       if (hole) {
-        hole.set({ selectable: false, evented: false, visible: false, originX: 'center', originY: 'center' });
-        hole.left = badge.left;
-        hole.top = badge.top;
-        canvas.add(hole);
+        hole.set({
+          originX: 'center',
+          originY: 'center',
+          left: 0,
+          top: 0,
+          visible: false,
+          selectable: false,
+          evented: false
+        });
+        badgeGroup.addWithUpdate(hole);
       }
 
+      // Start with very small scale
+      badgeGroup.scaleX = badgeGroup.scaleY = 0.05;
+      badgeGroup.setCoords();
+      canvas.add(badgeGroup);
       canvas.requestRenderAll();
 
-      // Animate badge from small to covering most of the canvas
-      const targetScale = Math.max((canvas.width * 0.8) / (badge.width || canvas.width), (canvas.height * 0.8) / (badge.height || canvas.height));
+      // Store references for event handlers
+      const badgeGroupRef = badgeGroup;
+      const badgeRef = badge;
+      const inkRef = ink;
+      const holeRef = hole;
+
+      // Animate badge group from small to covering most of the canvas
+      const canvasWidth = canvas.getWidth();
+      const canvasHeight = canvas.getHeight();
+      const targetScale = Math.max(
+        (canvasWidth * 0.8) / (badgeGroup.width || canvasWidth),
+        (canvasHeight * 0.8) / (badgeGroup.height || canvasHeight)
+      );
+      
       fabric.util.animate({
         startValue: 0.05,
         endValue: targetScale,
         duration: 1400,
         easing: fabric.util.ease.easeOutCubic,
         onChange(value) {
-          badge.scaleX = badge.scaleY = value;
-          badge.setCoords();
+          badgeGroup.scaleX = badgeGroup.scaleY = value;
+          badgeGroup.setCoords();
           canvas.requestRenderAll();
         },
         onComplete() {
           // When badge is large enough, hide other lesson 5 elements
           canvas.forEachObject(obj => {
-            if (obj === badge || obj === ink || obj === hole) return;
+            if (obj === badgeGroup) return;
             // Hide any lesson-5 backdrop elements
             obj.visible = false;
             obj.evented = false;
             obj.selectable = false;
           });
 
-          // Make badge group selectable as a whole now
-          badge.set({ selectable: true, evented: true });
-
-          // Only ink stains remain selectable for deletion at this stage
+          // Make ink selectable within the group for deletion
           if (ink) {
-            ink.bringToFront();
             ink.set({ selectable: true, evented: true });
           }
+
+          // Make the group itself selectable (for selecting the badge)
+          badgeGroup.set({ selectable: true, evented: true });
 
           canvas.requestRenderAll();
 
@@ -386,13 +441,14 @@ export async function startLesson6() {
     console.log('[Lesson6] Interactive features restricted: only Fill/Stroke panel is enabled');
 
     if (ENABLE_BADGE_OUTPUT) {
+      // Note: badge, ink, and hole are now stored in variables from the closure above
       // Wire up event: when ink group is removed (all ink paths deleted), guide the user to select the badge group and remove fills
       canvas.on('object:removed', (e) => {
-        // If removed object belonged to ink group, check remaining ink objects
-        // If no ink objects remain, update instructions
-        const inkObjects = canvas.getObjects().filter(o => o && o._objects && o._objects.some(s => s && s.type && s.type !== 'group') && o === ink);
-        // Simpler check: if ink group no longer exists on canvas
-        const hasInk = canvas.getObjects().includes(ink);
+        // Check if the badgeGroup still contains the ink object
+        const badgeGroup = canvas.getObjects().find(o => o.type === 'group' && o._objects && o._objects.includes(badge));
+        if (!badgeGroup) return;
+        
+        const hasInk = badgeGroup._objects && badgeGroup._objects.includes(ink);
         if (!hasInk) {
           const panel = document.getElementById('panel');
           if (panel) {
@@ -403,17 +459,18 @@ export async function startLesson6() {
             `;
           }
 
-          // Make badge selectable so user can select it as a group
+          // Make badge (within group) selectable
           badge.set({ selectable: true, evented: true });
           canvas.requestRenderAll();
         }
       });
 
       // After badge is selected and user clears fill, we need to enable drawing a small circle (10x10)
-      // Wire selection: when user selects badge, show hint to clear fills
+      // Wire selection: when user selects badge (or badgeGroup), show hint to clear fills
       canvas.on('selection:created', (e) => {
         const obj = canvas.getActiveObject();
-        if (obj === badge) {
+        // Check if selected object is the badgeGroup or contains the badge
+        if (obj === badge || (obj && obj.type === 'group' && obj._objects && obj._objects.includes(badge))) {
           // advise user via panel
           const panel = document.getElementById('panel');
           if (panel) panel.insertAdjacentHTML('beforeend', '<p>Nu: kies <strong>Fill: None</strong> in het Fill-panel.</p>');
@@ -441,11 +498,18 @@ export async function startLesson6() {
               hole.visible = true;
               hole.setCoords();
 
+              // Get absolute position of hole within the badgeGroup
+              const badgeGroup = canvas.getObjects().find(o => o.type === 'group' && o._objects && o._objects.includes(hole));
+              const holeAbsPos = badgeGroup ? fabric.util.transformPoint(
+                { x: hole.left, y: hole.top },
+                badgeGroup.calcTransformMatrix()
+              ) : { x: hole.left, y: hole.top };
+
               // Animate movement and snapping
               const startLeft = obj.left;
               const startTop = obj.top;
-              const endLeft = hole.left;
-              const endTop = hole.top;
+              const endLeft = holeAbsPos.x;
+              const endTop = holeAbsPos.y;
 
               fabric.util.animate({
                 startValue: 0,
