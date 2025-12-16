@@ -852,6 +852,13 @@ function checkAndSnapCircle(hole) {
                                             await writable.close();
                                             console.log('[Lesson6] Saved badge via File System Access API');
                                           } catch (err) {
+                                            // If the user cancelled the Save File Picker, do NOT fall back to automatic download.
+                                            const name = err && err.name ? String(err.name) : '';
+                                            const message = err && err.message ? String(err.message) : '';
+                                            if (name === 'AbortError' || name === 'NotAllowedError' || /user cancelled|user aborted|cancelled/i.test(message)) {
+                                              console.log('[Lesson6] User cancelled Save File Picker; aborting save without fallback');
+                                              return;
+                                            }
                                             console.warn('[Lesson6] SaveFilePicker failed, falling back to download:', err);
                                             const blob = new Blob([svg], { type: 'image/svg+xml' });
                                             const url = URL.createObjectURL(blob);
