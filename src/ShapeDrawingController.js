@@ -5,6 +5,7 @@
  */
 
 import { canvas } from './canvas.js';
+import { register as registerEvent, unregisterAllForOwner } from './EventRegistry.js';
 
 class ShapeDrawingController {
   constructor() {
@@ -57,14 +58,14 @@ class ShapeDrawingController {
     // Make canvas non-selectable for marquee but keep objects evented/selectable
     canvas.selection = false;
 
-    // Setup event handlers
+    // Setup event handlers (owner-scoped via EventRegistry)
     this.mouseDownHandler = this.onMouseDown.bind(this);
     this.mouseMoveHandler = this.onMouseMove.bind(this);
     this.mouseUpHandler = this.onMouseUp.bind(this);
 
-    canvas.on('mouse:down', this.mouseDownHandler);
-    canvas.on('mouse:move', this.mouseMoveHandler);
-    canvas.on('mouse:up', this.mouseUpHandler);
+    registerEvent(canvas, 'mouse:down', this.mouseDownHandler, this);
+    registerEvent(canvas, 'mouse:move', this.mouseMoveHandler, this);
+    registerEvent(canvas, 'mouse:up', this.mouseUpHandler, this);
 
     // Create dimension controls
     this.createDimensionControls(shapeType);
@@ -78,12 +79,8 @@ class ShapeDrawingController {
   disable() {
     if (!this.isEnabled) return;
 
-    // Remove event handlers
-    if (this.mouseDownHandler) {
-      canvas.off('mouse:down', this.mouseDownHandler);
-      canvas.off('mouse:move', this.mouseMoveHandler);
-      canvas.off('mouse:up', this.mouseUpHandler);
-    }
+    // Unregister owner-scoped handlers
+    unregisterAllForOwner(this);
 
     // Restore canvas interactivity
     canvas.selection = true;
@@ -397,10 +394,10 @@ class ShapeDrawingController {
   // Register selection listeners immediately so controls appear whenever selection changes
   _registerSelectionListeners() {
     try {
-      canvas.on('selection:created', this._handleSelectionChanged);
-      canvas.on('selection:updated', this._handleSelectionChanged);
-      canvas.on('selection:cleared', this._handleSelectionChanged);
-      canvas.on('object:selected', this._handleSelectionChanged);
+      registerEvent(canvas, 'selection:created', this._handleSelectionChanged, this);
+      registerEvent(canvas, 'selection:updated', this._handleSelectionChanged, this);
+      registerEvent(canvas, 'selection:cleared', this._handleSelectionChanged, this);
+      registerEvent(canvas, 'object:selected', this._handleSelectionChanged, this);
     } catch (e) { /* ignore */ }
   }
 }
