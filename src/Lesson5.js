@@ -475,18 +475,20 @@ function handleButtonClick() {
   
   // Start gear rotation
   if (lesson5State.gearObjects.length > 0) {
-    lesson5State.animations.gears = animationController.startRotationAnimation(
-      lesson5State.gearObjects, 
+    const gearsAnim = animationController.startRotationAnimation(
+      lesson5State.gearObjects,
       'gear-rotation'
     );
+    lesson5State.animations.gears = gearsAnim.controller;
   }
   
   // Start owl wiggle
   if (lesson5State.objects.owl) {
-    lesson5State.animations.owlWiggle = animationController.startWiggleAnimation(
+    const owlAnim = animationController.startWiggleAnimation(
       lesson5State.objects.owl,
       'owl-wiggle'
     );
+    lesson5State.animations.owlWiggle = owlAnim.controller;
   }
   
   // Bring owl and toolbox to front
@@ -748,18 +750,20 @@ export function enterEndState(lessonNumber = 5) {
   
   // Start gear rotation
   if (lesson5State.gearObjects.length > 0) {
-    lesson5State.animations.gears = animationController.startRotationAnimation(
-      lesson5State.gearObjects, 
+    const gearsAnim = animationController.startRotationAnimation(
+      lesson5State.gearObjects,
       'gear-rotation'
     );
+    lesson5State.animations.gears = gearsAnim.controller;
   }
   
   // Start owl wiggle
   if (lesson5State.objects.owl) {
-    lesson5State.animations.owlWiggle = animationController.startWiggleAnimation(
+    const owlAnim = animationController.startWiggleAnimation(
       lesson5State.objects.owl,
       'owl-wiggle'
     );
+    lesson5State.animations.owlWiggle = owlAnim.controller;
   }
   
   // Bring owl and toolbox to front

@@ -96,7 +96,7 @@ src/
 ├── constants.js              # All configuration in one place
 ├── AnimationController.js    # Centralized animation management
 ├── AssetLoader.js           # SVG loading with caching
-├── Lesson1Refactored.js     # Lesson 1: Select & Drag
+├── Lesson1.js     # Lesson 1: Select & Drag
 ├── Lesson2Refactored.js     # Lesson 2: Multi-Selection
 ├── Lesson3Refactored.js     # Lesson 3: Pan & Zoom
 ├── tutorial.js              # Main integration layer
@@ -164,7 +164,7 @@ open test-refactoring.html
 node --check src/constants.js
 node --check src/AnimationController.js
 node --check src/AssetLoader.js
-node --check src/Lesson1Refactored.js
+node --check src/Lesson1.js
 node --check src/Lesson2Refactored.js
 node --check src/Lesson3Refactored.js
 ```

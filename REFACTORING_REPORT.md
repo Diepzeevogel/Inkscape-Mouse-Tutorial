@@ -137,7 +137,7 @@ This report documents a comprehensive code quality audit and refactoring plan fo
 })();
 ```
 
-**After** (Lesson1Refactored.js, line 125):
+**After** (Lesson1.js, line 125):
 ```javascript
 const animationId = animationController.startPulseAnimation(
   targetGroup, 
@@ -410,7 +410,7 @@ ErrorReporter.tryExecute('Lesson1.updateTitle', () => {
 - Animation logic → `AnimationController`
 - Asset loading → `AssetLoader`
 - Configuration → `constants.js`
-- Tutorial logic → `Lesson1Refactored.js`
+- Tutorial logic → `Lesson1.js`
 
 ✅ **Single Responsibility**
 - Each function does ONE thing
@@ -458,7 +458,7 @@ function isHelmetAtTarget() {
 
 ### Immediate Actions (This Week)
 
-1. ✅ **Review** the refactored `Lesson1Refactored.js`
+1. ✅ **Review** the refactored `Lesson1.js`
 2. ⏳ **Test** refactored Lesson 1 for feature parity
 3. ⏳ **Integrate** refactored Lesson 1 into main.js
 4. ⏳ **Apply pattern** to Lesson 2 and Lesson 3
@@ -510,7 +510,7 @@ function isHelmetAtTarget() {
 3. ✅ **Constants Module** (`constants.js`)
 4. ✅ **Animation Controller** (`AnimationController.js`)
 5. ✅ **Asset Loader** (`AssetLoader.js`)
-6. ✅ **Refactored Lesson 1** (`Lesson1Refactored.js`)
+6. ✅ **Refactored Lesson 1** (`Lesson1.js`)
 
 ---
 

@@ -8,11 +8,12 @@
  */
 
 import { canvas } from './canvas.js';
+import { KeyboardController } from './KeyboardController.js';
+import { Pasted, LockedFromDelete, LastPos } from './MetadataRegistry.js';
 
 class CopyPasteController {
   constructor() {
     this.clipboard = null;
-    this.keydownHandler = null;
     this.isEnabled = false;
     this.pasteOffset = 10; // pixels to offset pasted objects
   }
@@ -26,9 +27,7 @@ class CopyPasteController {
       console.log('[CopyPaste] Already enabled');
       return;
     }
-
-    this.keydownHandler = this.handleKeydown.bind(this);
-    document.addEventListener('keydown', this.keydownHandler);
+    KeyboardController.register(this, this.handleKeydown.bind(this));
     this.isEnabled = true;
     console.log('[CopyPaste] Enabled (Ctrl+C / Ctrl+V / Delete / Backspace)');
   }
@@ -39,11 +38,7 @@ class CopyPasteController {
    */
   disable() {
     if (!this.isEnabled) return;
-
-    if (this.keydownHandler) {
-      document.removeEventListener('keydown', this.keydownHandler);
-      this.keydownHandler = null;
-    }
+    KeyboardController.unregister(this);
     this.clipboard = null;
     this.isEnabled = false;
     console.log('[CopyPaste] Disabled');
@@ -215,10 +210,7 @@ class CopyPasteController {
       }
 
       // Initialize _lastPos for linked movement if needed
-      clonedObj._lastPos = {
-        left: clonedObj.left,
-        top: clonedObj.top
-      };
+      LastPos.set(clonedObj, { left: clonedObj.left, top: clonedObj.top });
       
       // Update coordinates
       clonedObj.setCoords();
@@ -235,7 +227,7 @@ class CopyPasteController {
 
       // Mark this object as a pasted copy so lesson logic can treat it specially
       try {
-        clonedObj._isPasted = true;
+        Pasted.set(clonedObj, true);
       } catch (err) {
         // ignore
       }
@@ -285,7 +277,7 @@ class CopyPasteController {
       let skipped = 0;
       objects.forEach(obj => {
         try {
-          if (obj && obj._lockedFromDelete) {
+          if (obj && LockedFromDelete.has(obj)) {
             skipped++;
             console.log('[CopyPaste] Skipped deletion of locked object:', obj.type || obj);
             return;
@@ -298,7 +290,7 @@ class CopyPasteController {
     } else {
       // Single object
       try {
-        if (activeObject && activeObject._lockedFromDelete) {
+        if (activeObject && LockedFromDelete.has(activeObject)) {
           console.log('[CopyPaste] Skipped deletion of locked object:', activeObject.type);
         } else {
           canvas.remove(activeObject);

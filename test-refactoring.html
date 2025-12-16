@@ -146,9 +146,9 @@
                 const assetLoader = await import('./src/AssetLoader.js');
                 results.push('✅ AssetLoader.js loaded');
                 
-                // Test Lesson1Refactored
-                const lesson1 = await import('./src/Lesson1Refactored.js');
-                results.push('✅ Lesson1Refactored.js loaded');
+                // Test Lesson1
+                const lesson1 = await import('./src/Lesson1.js');
+                results.push('✅ Lesson1.js loaded');
                 
                 // Test Lesson2Refactored
                 const lesson2 = await import('./src/Lesson2Refactored.js');
@@ -277,7 +277,7 @@
         window.testLesson1 = async function() {
             const status = document.getElementById('lesson-test-status');
             try {
-                const { startLesson1, restartLesson1, cleanupLesson1 } = await import('./src/Lesson1Refactored.js');
+                const { startLesson1, restartLesson1, cleanupLesson1 } = await import('./src/Lesson1.js');
                 
                 const tests = [
                     typeof startLesson1 === 'function',

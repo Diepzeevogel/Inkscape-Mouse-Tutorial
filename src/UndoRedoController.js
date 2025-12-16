@@ -5,6 +5,9 @@
  */
 
 import { canvas } from './canvas.js';
+import { register as registerEvent, unregisterAllForOwner } from './EventRegistry.js';
+import { KeyboardController } from './KeyboardController.js';
+import { LastPos } from './MetadataRegistry.js';
 
 class UndoRedoController {
   constructor() {
@@ -31,13 +34,8 @@ class UndoRedoController {
       return;
     }
     this.keydownHandler = this.handleKeydown.bind(this);
-    // Attach on window in capture phase so undo/redo receives key events before other handlers
-    try {
-      window.addEventListener('keydown', this.keydownHandler, true);
-    } catch (e) {
-      // Fallback to document if window not available in some environments
-      document.addEventListener('keydown', this.keydownHandler);
-    }
+    // Register via KeyboardController so handlers are owner-scoped
+    KeyboardController.register(this, this.keydownHandler);
     
     // Track canvas modifications
     this.setupCanvasListeners();
@@ -57,8 +55,7 @@ class UndoRedoController {
     if (!this.isEnabled) return;
 
     if (this.keydownHandler) {
-      try { window.removeEventListener('keydown', this.keydownHandler, true); } catch (e) { /* ignore */ }
-      try { document.removeEventListener('keydown', this.keydownHandler); } catch (e) { /* ignore */ }
+      KeyboardController.unregister(this);
       this.keydownHandler = null;
     }
     
@@ -74,39 +71,23 @@ class UndoRedoController {
    */
   setupCanvasListeners() {
     // Track object modifications (includes color, size, rotation changes)
-    canvas.on('object:modified', this._boundCanvasModified);
-    canvas.on('object:added', this._boundCanvasModified);
-    canvas.on('object:removed', this._boundCanvasModified);
+    registerEvent(canvas, 'object:modified', this._boundCanvasModified, this);
+    registerEvent(canvas, 'object:added', this._boundCanvasModified, this);
+    registerEvent(canvas, 'object:removed', this._boundCanvasModified, this);
     // Track property changes that might not trigger object:modified
-    canvas.on('object:scaling', this._boundCanvasModified);
-    canvas.on('object:rotating', this._boundCanvasModified);
-    canvas.on('object:skewing', this._boundCanvasModified);
+    registerEvent(canvas, 'object:scaling', this._boundCanvasModified, this);
+    registerEvent(canvas, 'object:rotating', this._boundCanvasModified, this);
+    registerEvent(canvas, 'object:skewing', this._boundCanvasModified, this);
   }
 
   /**
    * Remove canvas event listeners
    */
   removeCanvasListeners() {
+    // Unregister any owner-scoped handlers registered via EventRegistry
     try {
-      if (this._boundCanvasModified) {
-        canvas.off('object:modified', this._boundCanvasModified);
-        canvas.off('object:added', this._boundCanvasModified);
-        canvas.off('object:removed', this._boundCanvasModified);
-        canvas.off('object:scaling', this._boundCanvasModified);
-        canvas.off('object:rotating', this._boundCanvasModified);
-        canvas.off('object:skewing', this._boundCanvasModified);
-      }
-    } catch (e) {
-      // fallback: remove without handler if precise removal fails
-      try {
-        canvas.off('object:modified');
-        canvas.off('object:added');
-        canvas.off('object:removed');
-        canvas.off('object:scaling');
-        canvas.off('object:rotating');
-        canvas.off('object:skewing');
-      } catch (ee) { /* ignore */ }
-    }
+      unregisterAllForOwner(this);
+    } catch (e) { /* ignore */ }
   }
 
   /**
@@ -153,7 +134,9 @@ class UndoRedoController {
    */
   saveState() {
     if (!this.isRecording) return;
-
+    // Use a transient approach: generate canvas JSON, then inject _lastPos
+    // into the serialized object entries without mutating fabric objects.
+    const canvasObjects = canvas.getObjects().slice();
     const json = canvas.toJSON([
       'perPixelTargetFind',
       'targetFindTolerance',
@@ -163,8 +146,26 @@ class UndoRedoController {
       'selectable',
       'evented',
       'hoverCursor',
-      '_lastPos'
+      // Note: we don't include '_lastPos' here on purpose; we'll inject below
     ]);
+
+    // Inject _lastPos into the serialized JSON objects by aligning
+    // with canvas.getObjects() order (fabric preserves object order).
+    try {
+      if (json && Array.isArray(json.objects)) {
+        json.objects.forEach((objJson, idx) => {
+          const o = canvasObjects[idx];
+          try {
+            if (o && typeof LastPos !== 'undefined' && LastPos && LastPos.has && LastPos.has(o)) {
+              const val = LastPos.get(o);
+              if (typeof val !== 'undefined') {
+                objJson._lastPos = val;
+              }
+            }
+          } catch (e) { /* ignore */ }
+        });
+      }
+    } catch (e) { /* ignore */ }
 
     // Wrap the canvas JSON together with the current URL hash so undo/redo can restore lesson navigation
     const wrapper = {
@@ -252,6 +253,18 @@ class UndoRedoController {
     canvas.clear();
     canvas.loadFromJSON(canvasState, () => {
       canvas.requestRenderAll();
+
+      // Restore LastPos metadata from any _lastPos properties present in restored objects
+      try {
+        canvas.getObjects().forEach(o => {
+          try {
+            if (o && typeof o._lastPos !== 'undefined') {
+              try { LastPos.set(o, o._lastPos); } catch (e) {}
+              try { delete o._lastPos; } catch (e) {}
+            }
+          } catch (e) { /* ignore */ }
+        });
+      } catch (e) { /* ignore */ }
 
       // Restore URL hash if present in the saved state. Use replaceState to avoid adding extra history
       try {

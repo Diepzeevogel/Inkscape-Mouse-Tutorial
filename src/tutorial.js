@@ -1,6 +1,6 @@
 import { canvas } from './canvas.js';
 import { rectsOverlap, findGroupFragments, makeFabricGroupFromFragment } from './utils.js';
-import { startLesson1 as startLesson1Refactored, restartLesson1, cleanupLesson1 } from './Lesson1Refactored.js';
+import { startLesson1 as startLesson1Refactored, restartLesson1, cleanupLesson1 } from './Lesson1.js';
 import { startLesson2 as startLesson2Refactored, restartLesson2, cleanupLesson2 } from './Lesson2.js';
 import { startLesson3 as startLesson3Refactored, restartLesson3, cleanupLesson3 } from './Lesson3.js';
 import { startLesson4 as startLesson4Refactored, restartLesson4, cleanupLesson4 } from './Lesson4.js';

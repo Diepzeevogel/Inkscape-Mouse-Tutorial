@@ -24,8 +24,8 @@ All three lessons have been successfully refactored and integrated into the live
    - Eliminates 150+ lines of duplicated loading code
    - Automatic caching improves performance
 
-4. **`src/Lesson1Refactored.js`** (279 lines)
-   - Refactored Lesson 1: Select and Drag
+4. **`src/Lesson1.js`** (279 lines)
+  - Refactored Lesson 1: Select and Drag
    - 64% reduction in code size vs original
    - 67% reduction in complexity
 

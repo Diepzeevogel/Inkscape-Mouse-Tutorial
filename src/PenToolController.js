@@ -5,6 +5,9 @@
  */
 
 import { canvas } from './canvas.js';
+import { register as registerEvent, unregisterAllForOwner } from './EventRegistry.js';
+import { KeyboardController } from './KeyboardController.js';
+import { PrevInteractive } from './MetadataRegistry.js';
 
 class PenToolController {
   constructor() {
@@ -51,22 +54,20 @@ class PenToolController {
     // Make canvas non-selectable while drawing
     canvas.selection = false;
     canvas.forEachObject(obj => {
-      obj._wasSelectable = obj.selectable;
-      obj._wasEvented = obj.evented;
-      obj.selectable = false;
-      obj.evented = false;
+      try { PrevInteractive.set(obj, { selectable: !!obj.selectable, evented: !!obj.evented }); } catch (e) { /* ignore */ }
+      try { obj.selectable = false; obj.evented = false; } catch (e) { /* ignore */ }
     });
 
-    // Setup event handlers
+    // Setup event handlers (owner-scoped via EventRegistry / KeyboardController)
     this.mouseDownHandler = this.onMouseDown.bind(this);
     this.mouseMoveHandler = this.onMouseMove.bind(this);
     this.keyDownHandler = this.onKeyDown.bind(this);
     this.dblClickHandler = this.onDoubleClick.bind(this);
 
-    canvas.on('mouse:down', this.mouseDownHandler);
-    canvas.on('mouse:move', this.mouseMoveHandler);
-    canvas.on('mouse:dblclick', this.dblClickHandler);
-    window.addEventListener('keydown', this.keyDownHandler);
+    registerEvent(canvas, 'mouse:down', this.mouseDownHandler, this);
+    registerEvent(canvas, 'mouse:move', this.mouseMoveHandler, this);
+    registerEvent(canvas, 'mouse:dblclick', this.dblClickHandler, this);
+    KeyboardController.register(this, this.keyDownHandler);
 
     // Change cursor
     canvas.defaultCursor = 'crosshair';
@@ -84,21 +85,21 @@ class PenToolController {
     // Cancel any in-progress drawing (don't auto-finish)
     this.cancelDrawing();
 
-    // Remove event handlers
-    canvas.off('mouse:down', this.mouseDownHandler);
-    canvas.off('mouse:move', this.mouseMoveHandler);
-    canvas.off('mouse:dblclick', this.dblClickHandler);
-    window.removeEventListener('keydown', this.keyDownHandler);
+    // Unregister owner-scoped handlers
+    unregisterAllForOwner(this);
+    KeyboardController.unregister(this);
 
     // Restore canvas interactivity
     canvas.selection = true;
     canvas.forEachObject(obj => {
-      if (obj._wasSelectable !== undefined) {
-        obj.selectable = obj._wasSelectable;
-        obj.evented = obj._wasEvented;
-        delete obj._wasSelectable;
-        delete obj._wasEvented;
-      }
+      try {
+        if (PrevInteractive.has(obj)) {
+          const prev = PrevInteractive.get(obj) || {};
+          try { obj.selectable = !!prev.selectable; } catch (e) {}
+          try { obj.evented = !!prev.evented; } catch (e) {}
+          try { PrevInteractive.delete(obj); } catch (e) {}
+        }
+      } catch (e) { /* ignore */ }
     });
 
     // Reset cursor
@@ -236,7 +237,7 @@ class PenToolController {
     
     // Create polyline (no fill while drawing)
     this.currentPath = new fabric.Polyline(this.points, {
-      fill: 'transparent',
+      fill: null,
       stroke: strokeColor,
       strokeWidth: strokeWidth,
       selectable: false,
@@ -296,7 +297,7 @@ class PenToolController {
       : 0.3;
     
     this.currentPath = new fabric.Polyline([...this.points], {
-      fill: 'transparent',
+      fill: null,
       stroke: strokeColor,
       strokeWidth: strokeWidth,
       selectable: false,
@@ -389,7 +390,7 @@ class PenToolController {
     let finalShape;
     if (closed) {
       finalShape = new fabric.Polygon([...this.points], {
-        fill: fillColor,
+        fill: null,
         stroke: strokeColor,
         strokeWidth: strokeWidth,
         selectable: true,
@@ -398,7 +399,7 @@ class PenToolController {
       });
     } else {
       finalShape = new fabric.Polyline([...this.points], {
-        fill: 'transparent',
+        fill: null,
         stroke: strokeColor,
         strokeWidth: strokeWidth,
         selectable: true,

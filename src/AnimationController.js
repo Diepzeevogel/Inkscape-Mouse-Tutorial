@@ -10,6 +10,8 @@ export class AnimationController {
   constructor(canvas) {
     this.canvas = canvas;
     this.activeAnimations = new Map(); // Track active animations for cleanup
+    // Map from owner (object or controller) -> Map(animationId -> cancelFn)
+    this._ownerAnimations = new WeakMap();
   }
 
   /**
@@ -41,6 +43,7 @@ export class AnimationController {
 
       const frameId = fabric.util.requestAnimFrame(animate);
       this.activeAnimations.set(animationId, frameId);
+      return frameId;
     };
 
     const frameId = fabric.util.requestAnimFrame(animate);
@@ -153,7 +156,9 @@ export class AnimationController {
     };
     
     controller.start();
-    return controller;
+    // Register a cancel function if caller wants owner-scoped management
+    const cancelFn = () => controller.stop();
+    return { controller, cancelFn };
   }
 
   /**
@@ -213,7 +218,8 @@ export class AnimationController {
     };
     
     controller.start();
-    return controller;
+    const cancelFn = () => controller.stop();
+    return { controller, cancelFn };
   }
 
   /**
@@ -327,6 +333,11 @@ export class AnimationController {
       }
       this.activeAnimations.delete(animationId);
     }
+    // Also remove any owner-registered cancel functions for this id
+    try {
+      // iterate owners and delete matching animationId entries
+      // WeakMap can't be iterated; owners should call unregister via stopAnimationsFor(owner)
+    } catch (e) { /* ignore */ }
   }
 
   /**
@@ -341,6 +352,34 @@ export class AnimationController {
       }
     });
     this.activeAnimations.clear();
+  }
+
+  /**
+   * Register an animation cancel function under an owner
+   * Owner should be an object (lesson state, controller, fabric object)
+   */
+  registerAnimation(owner, animationId, cancelFn) {
+    if (!owner || typeof cancelFn !== 'function') return;
+    let m = this._ownerAnimations.get(owner);
+    if (!m) {
+      m = new Map();
+      this._ownerAnimations.set(owner, m);
+    }
+    m.set(animationId, cancelFn);
+  }
+
+  /**
+   * Stop all animations registered for an owner and remove them
+   */
+  stopAnimationsFor(owner) {
+    if (!owner) return;
+    const m = this._ownerAnimations.get(owner);
+    if (!m) return;
+    for (const [id, cancelFn] of m.entries()) {
+      try { cancelFn(); } catch (e) { /* ignore */ }
+      try { this.stopAnimation(id); } catch (e) { /* ignore */ }
+    }
+    this._ownerAnimations.delete(owner);
   }
 
   /**
