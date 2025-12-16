@@ -11,6 +11,8 @@
  */
 
 import { TRANSFORM_MODE as CONFIG, LESSON_FEATURES } from './constants.js';
+import { register as registerEvent, unregisterAllForOwner } from './EventRegistry.js';
+import { KeyboardController } from './KeyboardController.js';
 
 // Transform modes
 const MODE = {
@@ -993,7 +995,8 @@ export function enterNodeEditMode(obj, canvas) {
     handleNodeEditMouseDown(e, targetObj, canvas);
   };
   
-  canvas.on('mouse:down', segmentClickHandler);
+  // Register segment click handler with EventRegistry using the object as owner
+  registerEvent(canvas, 'mouse:down', segmentClickHandler, targetObj);
   targetObj._segmentClickHandler = segmentClickHandler;
   
   targetObj.hasBorders = false;
@@ -1013,7 +1016,7 @@ function exitNodeEditMode(obj, canvas) {
   
   // Remove segment click handler
   if (obj._segmentClickHandler) {
-    canvas.off('mouse:down', obj._segmentClickHandler);
+    try { unregisterAllForOwner(obj); } catch (e) {}
     delete obj._segmentClickHandler;
   }
   
@@ -2429,26 +2432,24 @@ export function enableInkscapeTransformMode(canvas) {
   const onMouseDblClick = (e) => handleMouseDblClick(e, canvas);
   const onKeyDown = (e) => handleKeyDown(e, canvas);
   
-  // Attach event listeners
-  canvas.on('selection:created', onSelectionCreated);
-  canvas.on('selection:updated', onSelectionUpdated);
-  canvas.on('selection:cleared', onSelectionCleared);
-  canvas.on('mouse:down', onMouseDown);
-  canvas.on('mouse:up', onMouseUp);
-  canvas.on('mouse:dblclick', onMouseDblClick);
-  window.addEventListener('keydown', onKeyDown);
+  // Attach event listeners (owner-scoped)
+  const owner = {};
+  registerEvent(canvas, 'selection:created', onSelectionCreated, owner);
+  registerEvent(canvas, 'selection:updated', onSelectionUpdated, owner);
+  registerEvent(canvas, 'selection:cleared', onSelectionCleared, owner);
+  registerEvent(canvas, 'mouse:down', onMouseDown, owner);
+  registerEvent(canvas, 'mouse:up', onMouseUp, owner);
+  registerEvent(canvas, 'mouse:dblclick', onMouseDblClick, owner);
+
+  // Register keyboard via KeyboardController
+  try { KeyboardController.register(owner, onKeyDown); } catch (e) { try { window.addEventListener('keydown', onKeyDown); } catch (err) {} }
   
   debugLog('[InkscapeTransformMode] Enabled Inkscape-like transform modes');
   
   // Return cleanup function
   return () => {
-    canvas.off('selection:created', onSelectionCreated);
-    canvas.off('selection:updated', onSelectionUpdated);
-    canvas.off('selection:cleared', onSelectionCleared);
-    canvas.off('mouse:down', onMouseDown);
-    canvas.off('mouse:up', onMouseUp);
-    canvas.off('mouse:dblclick', onMouseDblClick);
-    window.removeEventListener('keydown', onKeyDown);
+    try { unregisterAllForOwner(owner); } catch (e) { /* ignore */ }
+    try { KeyboardController.unregister(owner); } catch (e) { try { window.removeEventListener('keydown', onKeyDown); } catch (ee) {} }
     debugLog('[InkscapeTransformMode] Disabled');
   };
 }
