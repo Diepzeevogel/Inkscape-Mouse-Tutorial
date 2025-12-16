@@ -382,6 +382,32 @@ function checkAndSnapCircle(hole) {
       lesson6State.animations.holePulse = null;
     }
   }
+
+  // Defensive: ensure hole is visible and styled correctly (guard against animation/race issues)
+  try {
+    if (hole) {
+      const finalOpacity = (lesson6State.originalHoleStyle && lesson6State.originalHoleStyle.opacity !== undefined && lesson6State.originalHoleStyle.opacity !== null) ? lesson6State.originalHoleStyle.opacity : 1;
+      hole.set({ visible: true, opacity: finalOpacity, stroke: (lesson6State.originalHoleStyle && lesson6State.originalHoleStyle.stroke) || '#00619c', strokeDashArray: (lesson6State.originalHoleStyle && lesson6State.originalHoleStyle.strokeDashArray) || null, fill: (lesson6State.originalHoleStyle && lesson6State.originalHoleStyle.fill) || '#ffffff' });
+      if (hole._objects) {
+        hole._objects.forEach(obj => {
+          try { obj.set({ visible: true, stroke: (lesson6State.originalHoleStyle && lesson6State.originalHoleStyle.stroke) || '#00619c', strokeDashArray: (lesson6State.originalHoleStyle && lesson6State.originalHoleStyle.strokeDashArray) || null, fill: (lesson6State.originalHoleStyle && lesson6State.originalHoleStyle.fill) || '#ffffff' }); } catch (e) {}
+        });
+      }
+
+      // Also defensively stop any known pulse animation ids that might be active
+      try {
+        if (lesson6State.animationController) {
+          lesson6State.animationController.stopAnimation('hole-pulse');
+          lesson6State.animationController.stopAnimation('pulse');
+        }
+      } catch (e) { /* ignore */ }
+
+      if (typeof hole.setCoords === 'function') hole.setCoords();
+      canvas.requestRenderAll();
+    }
+  } catch (e) {
+    console.warn('[Lesson6] Defensive restore of hole failed:', e);
+  }
   
   // Update instructions
   const panel = document.getElementById('panel');
@@ -806,15 +832,49 @@ function checkAndSnapCircle(hole) {
                                           }
                                         };
                                         const svg = await exportVisibleOnly();
-                                        const blob = new Blob([svg], { type: 'image/svg+xml' });
-                                        const url = URL.createObjectURL(blob);
-                                        const a = document.createElement('a');
-                                        a.href = url;
-                                        a.download = 'badge.svg';
-                                        document.body.appendChild(a);
-                                        a.click();
-                                        a.remove();
-                                        setTimeout(() => URL.revokeObjectURL(url), 1500);
+                                        // Prefer native Save File Picker when available (Chromium-based browsers)
+                                        if (window.showSaveFilePicker) {
+                                          try {
+                                            const options = {
+                                              suggestedName: 'badge.svg',
+                                              types: [
+                                                {
+                                                  description: 'SVG File',
+                                                  accept: { 'image/svg+xml': ['.svg'] }
+                                                }
+                                              ]
+                                            };
+                                            const handle = await window.showSaveFilePicker(options);
+                                            const writable = await handle.createWritable();
+                                            // Write SVG string as a Blob so encoding is preserved
+                                            const svgBlob = new Blob([svg], { type: 'image/svg+xml' });
+                                            await writable.write(svgBlob);
+                                            await writable.close();
+                                            console.log('[Lesson6] Saved badge via File System Access API');
+                                          } catch (err) {
+                                            console.warn('[Lesson6] SaveFilePicker failed, falling back to download:', err);
+                                            const blob = new Blob([svg], { type: 'image/svg+xml' });
+                                            const url = URL.createObjectURL(blob);
+                                            const a = document.createElement('a');
+                                            a.href = url;
+                                            a.download = 'badge.svg';
+                                            document.body.appendChild(a);
+                                            a.click();
+                                            a.remove();
+                                            setTimeout(() => URL.revokeObjectURL(url), 1500);
+                                          }
+                                        } else {
+                                          // Fallback: create anchor download which many browsers will show a Save As dialog depending on user settings
+                                          const blob = new Blob([svg], { type: 'image/svg+xml' });
+                                          const url = URL.createObjectURL(blob);
+                                          const a = document.createElement('a');
+                                          a.href = url;
+                                          a.download = 'badge.svg';
+                                          document.body.appendChild(a);
+                                          a.click();
+                                          a.remove();
+                                          setTimeout(() => URL.revokeObjectURL(url), 1500);
+                                        }
                                       } catch (err) {
                                         console.warn('[Lesson6] Failed to generate SVG for download:', err);
                                       }
@@ -956,6 +1016,44 @@ export async function startLesson6() {
     console.log('[Lesson6] Starting...');
     lesson6State.isActive = true;
 
+    // Ensure shape/text tools are disabled initially to avoid them being
+    // pre-enabled when entering lessons non-linearly.
+    try {
+      const ellipseTool = document.getElementById('tool-ellipse');
+      const textTool = document.getElementById('tool-text');
+      const penTool = document.getElementById('tool-pen');
+      if (ellipseTool) {
+        ellipseTool.disabled = true;
+        ellipseTool.setAttribute('aria-disabled', 'true');
+        ellipseTool.classList && ellipseTool.classList.remove('active');
+      }
+      if (textTool) {
+        textTool.disabled = true;
+        textTool.setAttribute('aria-disabled', 'true');
+        textTool.classList && textTool.classList.remove('active');
+      }
+      if (penTool) {
+        penTool.disabled = true;
+        penTool.setAttribute('aria-disabled', 'true');
+        penTool.classList && penTool.classList.remove('active');
+      }
+    } catch (e) { /* defensive */ }
+
+    // Auto-cleanup when user navigates away (hash change) or refreshes
+    try {
+      lesson6State._hashChangeHandler = () => {
+        try {
+          if (!location.hash || !location.hash.includes('lesson=6')) {
+            cleanupLesson6();
+          }
+        } catch (e) { /* ignore */ }
+      };
+      window.addEventListener('hashchange', lesson6State._hashChangeHandler, true);
+
+      lesson6State._beforeUnloadHandler = () => { try { cleanupLesson6(); } catch (e) {} };
+      window.addEventListener('beforeunload', lesson6State._beforeUnloadHandler, true);
+    } catch (e) { /* ignore */ }
+
     // First, show the end state of Lesson 5 so the user sees the machine and context
     try {
       await startLesson5();
@@ -978,7 +1076,7 @@ export async function startLesson6() {
 
     // Update UI
     updatePageMetadata();
-    updateInstructionPanel();
+    //updateInstructionPanel();
 
     
     // Setup Fill & Stroke panel for Lesson 6 interactions
@@ -1381,91 +1479,117 @@ export async function startLesson6() {
 
           console.log('[Lesson6] Badge elements are now locked in place, only ink is selectable');
           
-          // Setup selection event handlers
-          canvas.on('selection:created', () => {
-            const selected = canvas.getActiveObject();
-            console.log('[Lesson6] Selection created:', {
-              type: selected?.type,
-              isInk: selected === ink,
-              id: selected?.id,
-              name: selected?.name
-            });
-          });
-          canvas.on('selection:updated', () => {
-            const selected = canvas.getActiveObject();
-            console.log('[Lesson6] Selection updated:', {
-              type: selected?.type,
-              isInk: selected === ink,
-              id: selected?.id,
-              name: selected?.name
-            });
-          });
-          canvas.on('selection:cleared', () => {
-            console.log('[Lesson6] Selection cleared');
-          });
-          // Keep Fill/Stroke panel in sync with selection (attach additional handlers
-          // without removing existing listeners so other modules keep their handlers)
-          canvas.on('selection:created', () => {
-            const selected = canvas.getActiveObject();
-            if (lesson6State.fillStrokePanel) lesson6State.fillStrokePanel.updateForObject(selected);
-            // If text tool is active and the selected object is the lesson name, enable editing
+          // Setup selection and object-added event handlers (store on state for precise cleanup)
+          lesson6State.selectionCreatedHandler = (e) => {
             try {
-              const textBtn = document.getElementById('tool-text');
-              if (selected === lesson6State.name && textBtn && textBtn.classList.contains('active')) {
-                selected.set({ selectable: true, evented: true });
-                canvas.setActiveObject(selected);
-                if (typeof selected.enterEditing === 'function') selected.enterEditing();
-                if (typeof selected.selectAll === 'function') selected.selectAll();
-              }
-            } catch (err) {
-              console.warn('[Lesson6] Error handling selection for text editing:', err);
-            }
-            console.log('[Lesson6] Selection created:', { type: selected?.type, id: selected?.id });
-          });
-          canvas.on('selection:updated', () => {
-            const selected = canvas.getActiveObject();
-            if (lesson6State.fillStrokePanel) lesson6State.fillStrokePanel.updateForObject(selected);
+              const selected = canvas.getActiveObject();
+              console.log('[Lesson6] Selection created:', {
+                type: selected?.type,
+                isInk: selected === ink,
+                id: selected?.id,
+                name: selected?.name
+              });
+              if (lesson6State.fillStrokePanel) lesson6State.fillStrokePanel.updateForObject(selected);
+              // If this is a multi-selection (ActiveSelection) and it contains any placed/locked objects,
+              // disable transform controls on the selection so marquee selection cannot scale/rotate them.
+              try {
+                const isActiveSel = selected && (selected.type === 'activeSelection' || Array.isArray(selected._objects));
+                if (isActiveSel) {
+                  const objs = selected._objects || [];
+                  const hasLocked = objs.some(o => o && (o._lockedFromDelete || o._isPlaced));
+                  if (hasLocked) {
+                    try {
+                      selected.set({ hasControls: false, lockScalingX: true, lockScalingY: true, lockRotation: true, lockMovementX: true, lockMovementY: true, selectable: true, evented: true });
+                      // Ensure children remain selectable for copy/paste but are not individually transformable or movable via group handles
+                      objs.forEach(o => { try { o.set({ selectable: true, hasControls: false, lockScalingX: true, lockScalingY: true, lockRotation: true, lockMovementX: true, lockMovementY: true }); } catch (e) {} });
+                      if (typeof selected.setCoords === 'function') selected.setCoords();
+                      canvas.requestRenderAll();
+                    } catch (e) { /* ignore */ }
+                  }
+                }
+              } catch (e) { /* ignore */ }
+              try {
+                const textBtn = document.getElementById('tool-text');
+                if (selected === lesson6State.name && textBtn && textBtn.classList.contains('active')) {
+                  selected.set({ selectable: true, evented: true });
+                  canvas.setActiveObject(selected);
+                  if (typeof selected.enterEditing === 'function') selected.enterEditing();
+                  if (typeof selected.selectAll === 'function') selected.selectAll();
+                }
+              } catch (err) { console.warn('[Lesson6] Error handling selection for text editing:', err); }
+            } catch (err) { console.warn('[Lesson6] selectionCreatedHandler error:', err); }
+          };
+
+          lesson6State.selectionUpdatedHandler = (e) => {
             try {
-              const textBtn = document.getElementById('tool-text');
-              if (selected === lesson6State.name && textBtn && textBtn.classList.contains('active')) {
-                selected.set({ selectable: true, evented: true });
-                canvas.setActiveObject(selected);
-                if (typeof selected.enterEditing === 'function') selected.enterEditing();
-                if (typeof selected.selectAll === 'function') selected.selectAll();
-              }
-            } catch (err) {
-              console.warn('[Lesson6] Error handling selection for text editing:', err);
-            }
-            console.log('[Lesson6] Selection updated:', { type: selected?.type, id: selected?.id });
-          });
-          canvas.on('selection:cleared', () => {
-            if (lesson6State.fillStrokePanel) lesson6State.fillStrokePanel.updateForObject(null);
-            console.log('[Lesson6] Selection cleared');
-          });
+              const selected = canvas.getActiveObject();
+              console.log('[Lesson6] Selection updated:', { type: selected?.type, id: selected?.id });
+              if (lesson6State.fillStrokePanel) lesson6State.fillStrokePanel.updateForObject(selected);
+              // Apply same protection for updated selections (marquee/resizing updates)
+              try {
+                const isActiveSel = selected && (selected.type === 'activeSelection' || Array.isArray(selected._objects));
+                if (isActiveSel) {
+                  const objs = selected._objects || [];
+                  const hasLocked = objs.some(o => o && (o._lockedFromDelete || o._isPlaced));
+                  if (hasLocked) {
+                    try {
+                      selected.set({ hasControls: false, lockScalingX: true, lockScalingY: true, lockRotation: true, lockMovementX: true, lockMovementY: true, selectable: true, evented: true });
+                      objs.forEach(o => { try { o.set({ selectable: true, hasControls: false, lockScalingX: true, lockScalingY: true, lockRotation: true, lockMovementX: true, lockMovementY: true }); } catch (e) {} });
+                      if (typeof selected.setCoords === 'function') selected.setCoords();
+                      canvas.requestRenderAll();
+                    } catch (e) { /* ignore */ }
+                  }
+                }
+              } catch (e) { /* ignore */ }
+              try {
+                const textBtn = document.getElementById('tool-text');
+                if (selected === lesson6State.name && textBtn && textBtn.classList.contains('active')) {
+                  selected.set({ selectable: true, evented: true });
+                  canvas.setActiveObject(selected);
+                  if (typeof selected.enterEditing === 'function') selected.enterEditing();
+                  if (typeof selected.selectAll === 'function') selected.selectAll();
+                }
+              } catch (err) { console.warn('[Lesson6] Error handling selection for text editing:', err); }
+            } catch (err) { console.warn('[Lesson6] selectionUpdatedHandler error:', err); }
+          };
+
+          lesson6State.selectionClearedHandler = (e) => {
+            try {
+              console.log('[Lesson6] Selection cleared');
+              if (lesson6State.fillStrokePanel) lesson6State.fillStrokePanel.updateForObject(null);
+            } catch (err) { console.warn('[Lesson6] selectionClearedHandler error:', err); }
+          };
+
+          canvas.on('selection:created', lesson6State.selectionCreatedHandler);
+          canvas.on('selection:updated', lesson6State.selectionUpdatedHandler);
+          canvas.on('selection:cleared', lesson6State.selectionClearedHandler);
 
           // When the user draws a new shape (ellipse), track it and show Fill/Stroke panel
-          canvas.on('object:added', (e) => {
-            const obj = e.target;
-            if (!obj) return;
-            // Handle ellipses/circles (hole drawing)
-            if (obj.type === 'ellipse' || obj.type === 'circle') {
-              lesson6State.drawnCircle = obj;
-              if (lesson6State.fillStrokePanel) {
-                lesson6State.fillStrokePanel.updateForObject(obj);
-                lesson6State.fillStrokePanel.show();
+          lesson6State.objectAddedHandler = (e) => {
+            try {
+              const obj = e.target;
+              if (!obj) return;
+              // Handle ellipses/circles (hole drawing)
+              if (obj.type === 'ellipse' || obj.type === 'circle') {
+                lesson6State.drawnCircle = obj;
+                if (lesson6State.fillStrokePanel) {
+                  lesson6State.fillStrokePanel.updateForObject(obj);
+                  lesson6State.fillStrokePanel.show();
+                }
+                console.log('[Lesson6] User-drawn shape added:', obj.type, obj);
               }
-              console.log('[Lesson6] User-drawn shape added:', obj.type, obj);
-            }
 
-            // Handle pen-tool shapes (polyline/polygon) so Fill/Stroke panel can edit them
-            if ((obj.type === 'polyline' || obj.type === 'polygon') && obj.penToolPoints) {
-              if (lesson6State.fillStrokePanel) {
-                lesson6State.fillStrokePanel.updateForObject(obj);
-                lesson6State.fillStrokePanel.show();
+              // Handle pen-tool shapes (polyline/polygon) so Fill/Stroke panel can edit them
+              if ((obj.type === 'polyline' || obj.type === 'polygon') && obj.penToolPoints) {
+                if (lesson6State.fillStrokePanel) {
+                  lesson6State.fillStrokePanel.updateForObject(obj);
+                  lesson6State.fillStrokePanel.show();
+                }
+                console.log('[Lesson6] Pen-tool shape added:', obj.type, obj);
               }
-              console.log('[Lesson6] Pen-tool shape added:', obj.type, obj);
-            }
-          });
+            } catch (err) { console.warn('[Lesson6] objectAddedHandler error:', err); }
+          };
+          canvas.on('object:added', lesson6State.objectAddedHandler);
 
           // Enable delete functionality via CopyPasteController
           copyPasteController.enable();
@@ -1684,17 +1808,21 @@ export function cleanupLesson6() {
   const rectTool = document.getElementById('tool-rect');
   const ellipseTool = document.getElementById('tool-ellipse');
   const penTool = document.getElementById('tool-pen');
+  const textTool = document.getElementById('tool-text');
   if (rectTool) {
     rectTool.disabled = true;
     rectTool.setAttribute('aria-disabled', 'true');
+    rectTool.classList && rectTool.classList.remove('active');
   }
   if (ellipseTool) {
     ellipseTool.disabled = true;
     ellipseTool.setAttribute('aria-disabled', 'true');
+    ellipseTool.classList && ellipseTool.classList.remove('active');
   }
   if (penTool) {
     penTool.disabled = true;
     penTool.setAttribute('aria-disabled', 'true');
+    penTool.classList && penTool.classList.remove('active');
   }
   penToolController.disable();
 
@@ -1705,15 +1833,20 @@ export function cleanupLesson6() {
     nodeTool.setAttribute('aria-disabled', 'true');
   }
 
-  // Clear canvas event listeners
-  canvas.off('selection:created');
-  canvas.off('selection:updated');
-  canvas.off('selection:cleared');
-  canvas.off('object:added');
-  canvas.off('object:removed');
-  canvas.off('object:modified');
-  if (lesson6State.moveListener) {
-    canvas.off('object:moving', lesson6State.moveListener);
+  // Remove only the lesson-specific canvas event listeners (do not remove global handlers)
+  try {
+    if (lesson6State.selectionCreatedHandler) { canvas.off('selection:created', lesson6State.selectionCreatedHandler); lesson6State.selectionCreatedHandler = null; }
+    if (lesson6State.selectionUpdatedHandler) { canvas.off('selection:updated', lesson6State.selectionUpdatedHandler); lesson6State.selectionUpdatedHandler = null; }
+    if (lesson6State.selectionClearedHandler) { canvas.off('selection:cleared', lesson6State.selectionClearedHandler); lesson6State.selectionClearedHandler = null; }
+    if (lesson6State.objectAddedHandler) { canvas.off('object:added', lesson6State.objectAddedHandler); lesson6State.objectAddedHandler = null; }
+    if (lesson6State.penModifiedHandler) { canvas.off('object:modified', lesson6State.penModifiedHandler); lesson6State.penModifiedHandler = null; }
+    if (lesson6State.pasteModifiedHandler) { canvas.off('object:modified', lesson6State.pasteModifiedHandler); lesson6State.pasteModifiedHandler = null; }
+    if (lesson6State.penAddedHandler) { canvas.off('object:added', lesson6State.penAddedHandler); lesson6State.penAddedHandler = null; }
+    if (lesson6State.pasteAddedHandler) { canvas.off('object:added', lesson6State.pasteAddedHandler); lesson6State.pasteAddedHandler = null; }
+    if (lesson6State.preserveRemovalHandler) { canvas.off('object:removed', lesson6State.preserveRemovalHandler); lesson6State.preserveRemovalHandler = null; }
+    if (lesson6State.moveListener) { canvas.off('object:moving', lesson6State.moveListener); lesson6State.moveListener = null; }
+  } catch (e) {
+    console.warn('[Lesson6] Error removing lesson-specific canvas handlers:', e);
   }
   if (lesson6State.keydownHandler) {
     window.removeEventListener('keydown', lesson6State.keydownHandler, true);
@@ -1729,6 +1862,28 @@ export function cleanupLesson6() {
       try { ellipseTool.removeEventListener('click', lesson6State._ellipsePreserveHandler, true); } catch (e) { /* ignore */ }
       lesson6State._ellipsePreserveHandler = null;
     }
+    // Remove any hash/unload handlers added by startLesson6
+    try {
+      if (lesson6State._hashChangeHandler) {
+        window.removeEventListener('hashchange', lesson6State._hashChangeHandler, true);
+        lesson6State._hashChangeHandler = null;
+      }
+    } catch (e) { /* ignore */ }
+    try {
+      if (lesson6State._beforeUnloadHandler) {
+        window.removeEventListener('beforeunload', lesson6State._beforeUnloadHandler, true);
+        lesson6State._beforeUnloadHandler = null;
+      }
+    } catch (e) { /* ignore */ }
+
+    // Ensure text tool is disabled when leaving the lesson
+    try {
+      if (textTool) {
+        textTool.disabled = true;
+        textTool.setAttribute('aria-disabled', 'true');
+        textTool.classList && textTool.classList.remove('active');
+      }
+    } catch (e) { /* ignore */ }
     // Remove preserveRemovalHandler if attached
     try {
       if (lesson6State.preserveRemovalHandler) {
